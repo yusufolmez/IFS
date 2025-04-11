@@ -27,8 +27,9 @@ class StudentNode(DjangoObjectType):
             "user": ["exact"],
         }
         interfaces = (graphene.relay.Node,)
+
 #-------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-class CustomUserCreateMutation(graphene.Mutation):
+class CreateUserMutation(graphene.Mutation):
     class Arguments:
         username = graphene.String(required=True)
         email = graphene.String(required=True)
@@ -51,27 +52,44 @@ class CustomUserCreateMutation(graphene.Mutation):
         phone_number = graphene.String(required=False)
         address = graphene.String(required=False)
 
-    user = graphene.Field(CustomUserNode)
+    # user = graphene.Field(CustomUserNode)
+    message = graphene.String()
 
-    def mutate(self, info, username, email, password, role):
-        user = CustomUser.objects.create_user(
+    def mutate(self, info, username, email, password, role, first_name=None, last_name=None, student_number=None, department=None, faculty=None, date_of_birth=None, profile_picture=None, company_name=None, contact_person=None, website=None, tax_number=None, phone_number=None, address=None):
+        try:
+            user = CustomUser.objects.create_user(
             username=username,
             email=email,
             password=password,
             role=role
-        )
-        if role == "admin":
-            pass
-        if role == "student":
-            student = Student.objects.create(user=user, )
-            student.save()
-        if role == "company":
-            company = Company.objects.create(user=user)
-            company.save()
-        user.save()
-        return CustomUserCreateMutation(user=user)
-    
-
+            )
+            if role == "admin":
+                pass
+            if role == "student":
+                student = Student.objects.create(user=user, 
+                                                first_name=first_name,
+                                                last_name=last_name,
+                                                student_number=student_number,
+                                                department=department,
+                                                faculty=faculty,
+                                                date_of_birth=date_of_birth,
+                                                profile_picture=profile_picture,
+                                                phone_number=phone_number,
+                                                address=address)
+                student.save()
+            if role == "company":
+                company = Company.objects.create(user=user, 
+                                                company_name=company_name,
+                                                contact_person=contact_person,
+                                                website=website,
+                                                tax_number=tax_number,
+                                                phone_number=phone_number,
+                                                address=address)
+                company.save()
+            user.save()
+            return CreateUserMutation(message = "User created successfully")
+        except Exception as e:
+            raise Exception(f"Error creating user: {str(e)}")
     
 #-------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 class UserManageQuery(graphene.ObjectType):
@@ -91,5 +109,5 @@ class UserManageQuery(graphene.ObjectType):
                 
 #-------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 class UserManageMutation(graphene.ObjectType):
-    userCreate = CustomUserCreateMutation.Field()
+    userCreate = CreateUserMutation.Field()
 #-------------------------------------------------------------------------------------------------------------------------------------------------------------------------
