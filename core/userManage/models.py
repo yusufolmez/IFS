@@ -1,6 +1,6 @@
 from django.db import models
 from django.contrib.auth.hashers import make_password, check_password
-from django.contrib.auth.models import BaseUserManager
+from django.contrib.auth.models import AbstractBaseUser, BaseUserManager
 
 class CustomUserManager(BaseUserManager):
     def create_user(self, username, email, password=None, **extra_fields):
@@ -25,7 +25,7 @@ class BaseModel(models.Model):
     class Meta:
         abstract = True
 
-class User:
+class CustomUser(AbstractBaseUser):
     class RoleChoices(models.TextChoices):
         Admin = 'admin', 'Admin'
         Student = 'student', 'Student'
@@ -45,26 +45,32 @@ class User:
 
     objects = CustomUserManager()
 
-    def set_password(self, raw_password):
-        self.password = make_password(raw_password)
-
-    def check_password(self, raw_password):
-        return check_password(raw_password, self.password)
+    class Meta:
+        verbose_name = 'user'
+        verbose_name_plural = 'users'
 
     def has_perm(self, perm, obj=None):
-        return True
+        return self.is_superuser
 
     def has_module_perms(self, app_label):
-        return True
+        return self.is_superuser
 
     def get_username(self):
         return self.username 
+    
+    @property
+    def is_authenticated(self):
+        return True
+
+    @property
+    def is_anonymous(self):
+        return False
 
     def __str__(self):
         return self.email
     
 class Student(BaseModel):
-    user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='student_profile')
+    user = models.OneToOneField(CustomUser, on_delete=models.CASCADE, related_name='student_profile')
     first_name = models.CharField(max_length=30)
     last_name = models.CharField(max_length=30)
     student_number = models.CharField(max_length=10, unique=True)
@@ -79,7 +85,7 @@ class Student(BaseModel):
         return f"{self.first_name} {self.last_name}"
     
 class Company(BaseModel):
-    user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='company_profile')
+    user = models.OneToOneField(CustomUser, on_delete=models.CASCADE, related_name='company_profile')
     company_name = models.CharField(max_length=100)
     contact_person = models.CharField(max_length=100)
     phone_number = models.CharField(max_length=15, null=True, blank=True)
