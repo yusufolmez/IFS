@@ -31,7 +31,7 @@ class CustomUser(AbstractBaseUser, BaseModel):
         Student = 'student', 'Student'
         Company = 'company', 'Company'
 
-    username = models.CharField(max_length=150, unique=True)
+    username = models.CharField(max_length=150, unique=True) # kaldırılabilir.
     email = models.EmailField(unique=True)
     password = models.CharField(max_length=128)
     role = models.CharField(max_length=10, choices=RoleChoices.choices)
