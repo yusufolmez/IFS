@@ -27,7 +27,7 @@ DEBUG = True
 
 ALLOWED_HOSTS = []
 
-AUTH_USER_MODEL = 'userManage.User'
+AUTH_USER_MODEL = 'userManage.CustomUser'
 
 # Application definition
 
@@ -41,9 +41,11 @@ INSTALLED_APPS = [
     'userManage',
     'internshipManage',
     'graphene_django',
+    "corsheaders",
 ]
 
 MIDDLEWARE = [
+    "corsheaders.middleware.CorsMiddleware",
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
