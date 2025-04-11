@@ -25,7 +25,7 @@ class BaseModel(models.Model):
     class Meta:
         abstract = True
 
-class CustomUser(AbstractBaseUser):
+class CustomUser(AbstractBaseUser, BaseModel):
     class RoleChoices(models.TextChoices):
         Admin = 'admin', 'Admin'
         Student = 'student', 'Student'
@@ -78,7 +78,7 @@ class Student(BaseModel):
     faculty = models.CharField(max_length=50)
     phone_number = models.CharField(max_length=11, null=True, blank=True)
     address = models.TextField(null=True, blank=True)
-    date_of_birth = models.DateField()
+    date_of_birth = models.DateField(null=True, blank=True)
     profile_picture = models.ImageField(upload_to='profile_pictures/', null=True, blank=True)
 
     def __str__(self):
