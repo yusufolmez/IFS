@@ -10,6 +10,7 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/5.2/ref/settings/
 """
 
+from datetime import timedelta
 from pathlib import Path
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
@@ -86,7 +87,15 @@ DATABASES = {
 }
 
 GRAPHENE = {
-    'SCHEMA':'core.schema.schema'
+    'SCHEMA':'core.schema.schema',
+    'MIDDLEWARE': [
+        'core.middleware.JWTMiddleware',
+    ],
+}
+
+
+GRAPHQL_JWT = {
+    'JWT_PAYLOAD_HANDLER': 'userManage.utils.custom_jwt_payload'
 }
 
 # Password validation
