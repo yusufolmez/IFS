@@ -7,6 +7,8 @@ from functools import wraps
 import base64
 from graphene_django.types import DjangoObjectType
 from graphene_django.filter import DjangoFilterConnectionField
+
+from userManage.utils.blacklist import TokenBlacklist
 from .models import CustomRole, CustomUser, Student, Company
 
 #-------------------------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -19,7 +21,7 @@ def custom_permission_required(required_permiision):
             user = info.context.user
             if not user.is_authenticated:
                 raise Exception("Lütfen giriş yapınız.")
-            if not user.has_permission(required_permiision):
+            if not user.has_perm(required_permiision):
                 raise Exception('Yetkiniz yok')
             return func(root, info,*args,**kwargs)
         return wrapper
@@ -71,6 +73,20 @@ class StudentNode(DjangoObjectType):
         }
         interfaces = (graphene.relay.Node,)
 
+class CompanyNode(DjangoObjectType):
+    class Meta:
+        model = Company
+        fields = "__all__"
+        filter_fields = {
+            'company_name': ['exact', 'icontains'],
+            'contact_person': ['exact', 'icontains'],
+            'phone_number': ['exact'],
+            'address': ['exact', 'icontains'],
+            'website': ['exact', 'icontains'],
+            'tax_number': ['exact'],
+        }
+        interfaces = (graphene.relay.Node,)
+
 class TokenType(graphene.ObjectType):
     access_token = graphene.String()
     refresh_token = graphene.String()
@@ -78,7 +94,7 @@ class TokenType(graphene.ObjectType):
 class UserType(DjangoObjectType):
     class Meta:
         model = CustomUser
-        fields = ('id', 'username', 'email', 'role', 'is_active', 'is_staff', 'is_superuser')
+        fields = "__all__"
 #-------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 class AuthMutation(graphene.Mutation):
     tokens = graphene.Field(TokenType)
@@ -95,7 +111,45 @@ class AuthMutation(graphene.Mutation):
         refresh_token = generate_refresh_token(user)
 
         return AuthMutation(tokens=TokenType(access_token=access_token,refresh_token=refresh_token))
+    
+class RefreshTokenMutation(graphene.Mutation):
+    tokens = graphene.Field(TokenType)
+    class Arguments:
+        refresh_token = graphene.String(required=True)
+    
+    def mutate(self,info,refresh_token):
+        try:
+            payload = jwt.decode(refresh_token, settings.SECRET_KEY, algorithms=['HS256'])
+            if payload.get('token_type') != 'refresh':
+                raise Exception("Token tipi refresh değil")
+            
+            user = CustomUser.objects.get(id=payload['user_id'])
+            access_token = generate_access_token(user)
+            refresh_token = generate_refresh_token(user)
 
+            return RefreshTokenMutation(tokens=TokenType(access_token=access_token,refresh_token=refresh_token))
+        except jwt.ExpiredSignatureError:
+            raise Exception("Refresh token süresi dolmuş.")
+        except jwt.InvalidTokenError:
+            raise Exception("Geçersiz refresh token.")
+        
+class LogoutMutation(graphene.Mutation):
+    success = graphene.Boolean()
+    message = graphene.String()
+
+    class Arguments:
+        access_token = graphene.String(required=True)
+        refresh_token = graphene.String(required=True)
+
+    def mutate(self, info, access_token, refresh_token):
+        try:
+            token_blacklist = TokenBlacklist()
+            if token_blacklist.logout(access_token, refresh_token):
+                return LogoutMutation(success=True, message="Cikis islemi basarili.")
+            else:
+                return LogoutMutation(success=False, message="Cikis islemi basarisiz.")
+        except Exception as e:
+            return LogoutMutation(success=False, message=str(e))
 #-------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
 class CreateUserMutation(graphene.Mutation):
@@ -149,36 +203,26 @@ class CreateUserMutation(graphene.Mutation):
                 user.save()
 
             elif user_type.lower() == 'student':
-                required_fields = ['first_name', 'last_name', 'student_number', 'department', 'faculty']
-                for field in required_fields:
-                    if field not in kwargs or not kwargs[field]:
-                        user.delete()
-                        return CreateUserMutation(success=False, message=f"Alan {field} ogrenci tipte zorunludur.")
                 Student.objects.create(
                                     user=user,
-                                    first_name=kwargs.get('first_name'),
-                                    last_name=kwargs.get('last_name'),
-                                    student_number=kwargs.get('student_number'),
-                                    department=kwargs.get('department'),
-                                    faculty=kwargs.get('faculty'),
-                                    phone_number=kwargs.get('phone_number'),
-                                    address=kwargs.get('address'),
-                                    date_of_birth=kwargs.get('date_of_birth')
+                                    first_name=first_name,
+                                    last_name=last_name,
+                                    student_number=student_number,
+                                    department=department,
+                                    faculty=faculty,
+                                    phone_number=phone_number,
+                                    address=address,
+                                    date_of_birth=date_of_birth
                                 )
             elif user_type.lower() == 'company':
-                required_fields = ['company_name', 'contact_person']
-                for field in required_fields:
-                    if field not in kwargs or not kwargs[field]:
-                        user.delete()
-                        return CreateUserMutation(success=False, message=f"Alan {field} şirket tipte zorunludur.")
                 Company.objects.create(
                                     user=user,
-                                    company_name=kwargs.get('company_name'),
-                                    contact_person=kwargs.get('contact_person'),
-                                    phone_number=kwargs.get('company_phone'),
-                                    address=kwargs.get('company_address'),
-                                    website=kwargs.get('website'),
-                                    tax_number=kwargs.get('tax_number')
+                                    company_name=company_name,
+                                    contact_person=contact_person,
+                                    phone_number=phone_number,
+                                    address=address,
+                                    website=website,
+                                    tax_number=tax_number
                                 )
             
             return CreateUserMutation(message = "User created successfully")
@@ -204,10 +248,9 @@ class UserManageQuery(graphene.ObjectType):
 #-------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 class UserManageMutation(graphene.ObjectType):
     auth = AuthMutation.Field()
+    refresh_token = RefreshTokenMutation.Field()
+    logout = LogoutMutation.Field()
 
-
-
-    
     userCreate = CreateUserMutation.Field()
 
 #-------------------------------------------------------------------------------------------------------------------------------------------------------------------------
