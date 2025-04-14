@@ -4,7 +4,7 @@ from django.contrib.auth.models import AbstractBaseUser, BaseUserManager
 
 class CustomPermission(models.Model):
     name = models.CharField(max_length=50)
-    codename = models.CharField(max_length=150)
+    codename = models.CharField(max_length=150, unique=True)
     description = models.CharField(max_length=150)
 
     def __str__(self):
