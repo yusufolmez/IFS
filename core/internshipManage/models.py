@@ -13,6 +13,7 @@ class Internship(BaseModel):
     company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name='internships_compmany')
     start_date = models.DateField()
     end_date = models.DateField()
+    total_working_days = models.IntegerField(null=True, blank=True)
     position = models.CharField(max_length=100)
     description = models.TextField()
     status = models.CharField(max_length=20, choices=StatusChoices.choices, default=StatusChoices.Pending)

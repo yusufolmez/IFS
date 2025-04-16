@@ -232,10 +232,13 @@ class CreateUserMutation(graphene.Mutation):
 #-------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 class UserManageQuery(graphene.ObjectType):
     user = graphene.relay.Node.Field(CustomUserNode)
-    allUsers = DjangoFilterConnectionField(CustomUserNode)
+    users = DjangoFilterConnectionField(CustomUserNode)
 
     student = graphene.relay.Node.Field(StudentNode)
-    allStudents = DjangoFilterConnectionField(StudentNode)
+    students = DjangoFilterConnectionField(StudentNode)
+
+    company = graphene.relay.Node.Field(CompanyNode)
+    companies = DjangoFilterConnectionField(CompanyNode)
     
     def resolve_allUsers(self, info, id=None , **kwargs):
         if id:
