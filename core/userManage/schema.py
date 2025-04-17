@@ -1,51 +1,13 @@
-from datetime import datetime, timedelta
-from django.conf import settings
 from django.contrib.auth import authenticate
 import graphene
-import jwt
-from functools import wraps
+from .utils.jwt_payload import generate_access_token, generate_refresh_token, custom_permission_required
 import base64
 from graphene_django.types import DjangoObjectType
 from graphene_django.filter import DjangoFilterConnectionField
-
+import jwt
+from django.conf import settings
 from userManage.utils.blacklist import TokenBlacklist
 from .models import CustomRole, CustomUser, Student, Company
-
-#-------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-
-def custom_permission_required(required_permiision):
-    def decoreator(func):
-        @wraps(func)
-        def wrapper(root,info,*args,**kwargs):
-            
-            user = info.context.user
-            if not user.is_authenticated:
-                raise Exception("Lütfen giriş yapınız.")
-            if not user.has_perm(required_permiision):
-                raise Exception('Yetkiniz yok')
-            return func(root, info,*args,**kwargs)
-        return wrapper
-    return decoreator
-
-def generate_access_token(user):
-    payload = {
-        'user_id':user.id,
-        'user_role':user.role.name,
-        'exp': datetime.utcnow() + timedelta(minutes=15),
-        'iat': datetime.utcnow(),
-        'token_type':'access',
-    }
-    return jwt.encode(payload, settings.SECRET_KEY, algorithm='HS256')
-
-def generate_refresh_token(user):
-    payload = {
-        'user_id':user.id,
-        'user_role':user.role.name,
-        'exp': datetime.utcnow() + timedelta(days=7),
-        'iat': datetime.utcnow(),
-        'token_type':'refresh',
-    }
-    return jwt.encode(payload, settings.SECRET_KEY, algorithm='HS256')
 
 #-------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
@@ -180,9 +142,8 @@ class CreateUserMutation(graphene.Mutation):
     user = graphene.Field(lambda: UserType)
     success = graphene.Boolean()
     message = graphene.String()
-
-    @classmethod
-    def mutate(cls, root, info, username, email, password, role_id, user_type, first_name=None, last_name=None, student_number=None, department=None, faculty=None, date_of_birth=None, profile_picture=None, company_name=None, contact_person=None, website=None, tax_number=None, phone_number=None, address=None, **kwargs):
+    @custom_permission_required('userManage.UserAdd')
+    def mutate(self, info, username, email, password, role_id, user_type, first_name=None, last_name=None, student_number=None, department=None, faculty=None, date_of_birth=None, profile_picture=None, company_name=None, contact_person=None, website=None, tax_number=None, phone_number=None, address=None, **kwargs):
         try:
             try:
                 role = CustomRole.objects.get(id=role_id)
