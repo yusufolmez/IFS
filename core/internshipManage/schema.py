@@ -2,6 +2,7 @@ import graphene
 from graphene_django.types import DjangoObjectType
 from graphene_django.filter import DjangoFilterConnectionField
 
+from userManage.utils.jwt_payload import custom_permission_required
 from userManage.models import Student, Company
 from .models import Internship, InternshipDiary, Evaulation
 from .utils import calculate_total_working_days
@@ -68,7 +69,7 @@ class CreateInternshipApplication(graphene.Mutation):
     success = graphene.Boolean()
     message = graphene.String()
     total_working_days = graphene.Int()
-
+    @custom_permission_required('internshipManage.InternshipApplicationAdd')
     def mutate(self, info, student_id, company_id, start_date, end_date, position, description, status):
         try:
             student = Student.objects.get(id=student_id)
@@ -107,6 +108,7 @@ class CreateInternshipDiary(graphene.Mutation):
     success = graphene.Boolean()
     message = graphene.String()
 
+    @custom_permission_required('internshipManage.InternshipDiaryAdd')
     def mutate(self, info, internship_id, date, hours_worked, day_number, status):
         try:
             internship = Internship.objects.get(id=internship_id)
@@ -141,6 +143,51 @@ class CreateInternshipDiary(graphene.Mutation):
             return CreateInternshipDiary(success=False, message="Staj bulunamadi.")
         except Exception as e:
             return CreateInternshipDiary(success=False, message=str(e))
+        
+class CreateEvaulation(graphene.Mutation):
+    class Arguments:
+        internship_id = graphene.ID(required=True)
+        attedence = graphene.Int(required=True)
+        performance = graphene.Int(required=True)
+        adaptation = graphene.Int(required=True)
+        technical_skills = graphene.Int(required=True)
+        communication_skills = graphene.Int(required=True)
+        teamwork = graphene.Int(required=True)
+        comments = graphene.String(required=False)
+        overall_score = graphene.Decimal(required=True)
+        is_approved = graphene.Boolean(required=True)
+
+    success = graphene.Boolean()
+    message = graphene.String()
+    internship = graphene.Field(InternshipNode)
+    @custom_permission_required('internshipManage.InternshipApplicationEvaluation')
+    def mutate(self,info, internship_id, attedence, performance, adaptation, technical_skills, communication_skills, teamwork, overall_score, is_approved, comments=None):
+        try:
+            if Evaulation.objects.filter(internship_id=internship_id).exists():
+                return CreateEvaulation(success=False, message="Bu staj için bir değerlendirme zaten mevcut.")
+            if attedence < 0 or performance < 0 or adaptation < 0 or technical_skills < 0 or communication_skills < 0 or teamwork < 0 or attedence > 100 or performance > 100 or adaptation > 100 or technical_skills > 100 or communication_skills > 100 or teamwork > 100:
+                return CreateEvaulation(success=False, message="Değerlendirme puanları 0 ile 100 arasında olmalıdır.")
+            if overall_score < 0 or overall_score > 100:
+                return CreateEvaulation(success=False, message="Genel puan 0 ile 100 arasında olmalıdır.")
+            internship = Internship.objects.get(id=internship_id)
+            evaluation = Evaulation(
+                internship=internship,
+                attedence=attedence,
+                performance=performance,
+                adaptation=adaptation,
+                technical_skills=technical_skills,
+                communication_skills=communication_skills,
+                teamwork=teamwork,
+                comments=comments,
+                overall_score=overall_score,
+                is_approved=is_approved
+            )
+            evaluation.save()
+            return CreateEvaulation(success=True, internship=internship, message="Staj degerlendirmesi basariyla olusturuldu.")
+        except Internship.DoesNotExist:
+            return CreateEvaulation(success=False, message="Staj bulunamadi.")
+        except Exception as e:
+            return CreateEvaulation(success=False, message=str(e))
 #-------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 class InternshipQuery(graphene.ObjectType):
     internship = graphene.relay.Node.Field(InternshipNode)
@@ -155,3 +202,4 @@ class InternshipQuery(graphene.ObjectType):
 class InternshipMutation(graphene.ObjectType):
     create_internship_application = CreateInternshipApplication.Field()
     create_internship_diary = CreateInternshipDiary.Field()
+    create_evaulation = CreateEvaulation.Field()

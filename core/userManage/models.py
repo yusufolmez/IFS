@@ -38,10 +38,18 @@ class CustomUserManager(BaseUserManager):
     def create_superuser(self, username, email, password=None, **extra_fields):
         extra_fields.setdefault('is_staff', True)
         extra_fields.setdefault('is_superuser', True)
-        extra_fields.setdefault('is_active', True)
-        
+
+        if extra_fields.get('is_staff') is not True:
+            raise ValueError('Superuser must have is_staff=True.')
+        if extra_fields.get('is_superuser') is not True:
+            raise ValueError('Superuser must have is_superuser=True.')
+
+        role_id = extra_fields.pop('role', None)
+        if isinstance(role_id, int):
+            from .models import CustomRole
+            extra_fields['role'] = CustomRole.objects.get(id=role_id)
+
         return self.create_user(username, email, password, **extra_fields)
-    
     def get_by_natural_key(self, username):
         return self.get(username=username)  
 
@@ -73,7 +81,7 @@ class CustomUser(AbstractBaseUser, BaseModel):
 
     def has_perm(self, perm, obj=None):
         if self.is_superuser:
-                    return True
+            return True
     
         if self.role:
             return perm in self.role.get_permission()
