@@ -8,6 +8,7 @@ import jwt
 from django.conf import settings
 from userManage.utils.blacklist import TokenBlacklist
 from .models import CustomRole, CustomUser, Student, Company
+from django.core.mail import send_mail
 
 #-------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
@@ -175,6 +176,13 @@ class CreateUserMutation(graphene.Mutation):
                                     address=address,
                                     date_of_birth=date_of_birth
                                 )
+                send_mail(
+                    subject='Ögrenci Kaydı Başarılı',
+                    message=f'Merhaba {first_name} {last_name},\n\nStaj sistemine kaydolduğunuz için teşekkür ederiz. Staj başvurularınızı yapmaya başlayabilirsiniz.\n\nIFS giris bilgileri: {email}//{password} \n\nİyi çalışmalar dileriz,\nStaj Yönetim Ekibi',
+                    from_email=settings.DEFAULT_FROM_EMAIL,
+                    recipient_list=[email],
+                    fail_silently=False,
+                )
             elif user_type.lower() == 'company':
                 Company.objects.create(
                                     user=user,
@@ -185,6 +193,14 @@ class CreateUserMutation(graphene.Mutation):
                                     website=website,
                                     tax_number=tax_number
                                 )
+                
+                send_mail(
+                    subject='Şirket Kaydı Başarılı',
+                    message=f'Merhaba {contact_person},\n\nStaj sistemine kaydolduğunuz için teşekkür ederiz. {company_name} şirketının staj başvurularını değerlendırmeye başlayabilirsiniz.\n\nIFS giris bilgileriniz: {email}//{password}\n\nİyi çalışmalar dileriz,\nStaj Yönetim Ekibi',
+                    from_email=settings.DEFAULT_FROM_EMAIL,
+                    recipient_list=[email],
+                    fail_silently=False,
+                )
             
             return CreateUserMutation(message = "User created successfully")
         except Exception as e:
