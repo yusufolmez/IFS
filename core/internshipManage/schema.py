@@ -125,10 +125,10 @@ class CreateInternshipDiary(graphene.Mutation):
                     message=f"{day_number} numaralı bir günlük zaten mevcut."
             )
 
-            if hours_worked < 0:
+            if hours_worked < 0 and hours_worked > 24:
                 return CreateInternshipDiary(
                     success=False, 
-                    message="Calisma saati negatif olamaz."
+                    message="Calisma saati 0 ile 24 saat arasinda olmali."
             )
             diary = InternshipDiary(
                 internship=internship,
