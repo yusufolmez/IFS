@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>{{ title }}</title>
+    <style>
+      body {
+          font-family: Arial, sans-serif;
+          line-height: 1.6;
+          color: #333;
+          margin: 0;
+          padding: 0;
+      }
+      .container {
+          max-width: 600px;
+          margin: 0 auto;
+          padding: 20px;
+      }
+      .header {
+          background-color: {{ header_color }};
+          color: white;
+          padding: 20px;
+          text-align: center;
+          border-radius: 5px 5px 0 0;
+      }
+      .content {
+          background-color: #f9f9f9;
+          padding: 20px;
+          border-left: 1px solid #ddd;
+          border-right: 1px solid #ddd;
+      }
+      .footer {
+          background-color: #eeeeee;
+          padding: 15px;
+          text-align: center;
+          font-size: 14px;
+          color: #666;
+          border-radius: 0 0 5px 5px;
+          border: 1px solid #ddd;
+      }
+      .credentials {
+          background-color: #e9ecef;
+          padding: 15px;
+          margin: 15px 0;
+          border-radius: 5px;
+          border-left: 4px solid {{ accent_color }};
+      }
+      .button {
+          display: inline-block;
+          background-color: {{ button_color }};
+          color: white;
+          padding: 10px 20px;
+          text-decoration: none;
+          border-radius: 5px;
+          margin-top: 15px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <div class="header">
+        <h1>{{ header_text }}</h1>
+      </div>
+      <div class="content">
+        <h2>Merhaba {{ name }},</h2>
+
+        {{ custom_message|safe }}
+
+        <div class="credentials">
+          <h3>Giriş Bilgileriniz</h3>
+          <p><strong>E-posta:</strong> {{ email }}</p>
+          <p><strong>Şifre:</strong> {{ password }}</p>
+        </div>
+
+        <p>
+          Herhangi bir sorunuz olursa bizimle iletişime geçmekten çekinmeyin.
+        </p>
+
+        <a href="{{ site_url }}" class="button">Sisteme Giriş Yap</a>
+      </div>
+      <div class="footer">
+        <p>İyi çalışmalar dileriz,<br />Staj Yönetim Ekibi</p>
+      </div>
+    </div>
+  </body>
+</html>

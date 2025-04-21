@@ -8,8 +8,11 @@ import jwt
 from django.conf import settings
 from userManage.utils.blacklist import TokenBlacklist
 from .models import CustomRole, CustomUser, Student, Company
-from django.core.mail import send_mail
 
+from django.core.mail import send_mail
+from django.template.loader import render_to_string
+from django.utils.html import strip_tags
+from django.utils.safestring import mark_safe
 #-------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
 class CustomUserNode(DjangoObjectType):
@@ -159,6 +162,8 @@ class CreateUserMutation(graphene.Mutation):
             )
             user.save()
 
+            site_url = 'https://site-url.com'
+
             if user_type.lower() == 'admin':
                 user.is_superuser = True
                 user.is_staff = True
@@ -176,13 +181,19 @@ class CreateUserMutation(graphene.Mutation):
                                     address=address,
                                     date_of_birth=date_of_birth
                                 )
-                send_mail(
-                    subject='Ögrenci Kaydı Başarılı',
-                    message=f'Merhaba {first_name} {last_name},\n\nStaj sistemine kaydolduğunuz için teşekkür ederiz. Staj başvurularınızı yapmaya başlayabilirsiniz.\n\nIFS giris bilgileri: {email}//{password} \n\nİyi çalışmalar dileriz,\nStaj Yönetim Ekibi',
-                    from_email=settings.DEFAULT_FROM_EMAIL,
-                    recipient_list=[email],
-                    fail_silently=False,
-                )
+                context = {
+                    'title': 'Öğrenci Kaydı Başarılı',
+                    'header_text': 'Öğrenci Kaydı Başarılı',
+                    'name': f"{first_name} {last_name}",
+                    'email': email,
+                    'password': password,
+                    'site_url': site_url,
+                    'header_color': '#0056b3',
+                    'button_color': '#0056b3',
+                    'accent_color': '#0056b3',
+                    'custom_message': '<p>Staj sistemine kaydolduğunuz için teşekkür ederiz. Staj başvurularınızı yapmaya başlayabilirsiniz.</p>'
+                }
+                subject = 'Öğrenci Kaydı Başarılı'
             elif user_type.lower() == 'company':
                 Company.objects.create(
                                     user=user,
@@ -194,13 +205,32 @@ class CreateUserMutation(graphene.Mutation):
                                     tax_number=tax_number
                                 )
                 
-                send_mail(
-                    subject='Şirket Kaydı Başarılı',
-                    message=f'Merhaba {contact_person},\n\nStaj sistemine kaydolduğunuz için teşekkür ederiz. {company_name} şirketının staj başvurularını değerlendırmeye başlayabilirsiniz.\n\nIFS giris bilgileriniz: {email}//{password}\n\nİyi çalışmalar dileriz,\nStaj Yönetim Ekibi',
-                    from_email=settings.DEFAULT_FROM_EMAIL,
-                    recipient_list=[email],
-                    fail_silently=False,
-                )
+                context = {
+                    'title': 'Şirket Kaydı Başarılı',
+                    'header_text': 'Şirket Kaydı Başarılı',
+                    'name': contact_person,
+                    'email': email,
+                    'password': password,
+                    'site_url': site_url,
+                    'header_color': '#28a745',  # Yeşil tema
+                    'button_color': '#28a745',
+                    'accent_color': '#28a745',
+                    'custom_message': f'<p>Staj sistemine kaydolduğunuz için teşekkür ederiz. <strong>{company_name}</strong> şirketinin staj başvurularını değerlendirmeye başlayabilirsiniz.</p>'
+                }
+                
+                subject = 'Şirket Kaydı Başarılı'
+            
+            html_message = render_to_string('emails/email.html', context)
+            plain_message = strip_tags(html_message)
+
+            send_mail(
+                subject=subject,
+                message=plain_message,
+                from_email=settings.DEFAULT_FROM_EMAIL,
+                recipient_list=[email],
+                fail_silently=False,
+                html_message=html_message
+            )
             
             return CreateUserMutation(message = "User created successfully")
         except Exception as e:
