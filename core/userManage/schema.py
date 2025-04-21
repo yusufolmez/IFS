@@ -13,6 +13,13 @@ from django.core.mail import send_mail
 from django.template.loader import render_to_string
 from django.utils.html import strip_tags
 from django.utils.safestring import mark_safe
+
+from django.db import transaction
+from graphene_file_upload.scalars import Upload
+
+from azure.storage.blob import BlobServiceClient
+import uuid
+
 #-------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
 class CustomUserNode(DjangoObjectType):
@@ -133,7 +140,7 @@ class CreateUserMutation(graphene.Mutation):
         department = graphene.String(required=False)
         faculty = graphene.String(required=False)
         date_of_birth = graphene.Date(required=False)
-        profile_picture = graphene.String(required=False)
+        profile_picture = Upload(required=False)
 
         company_name = graphene.String(required=False)
         contact_person = graphene.String(required=False)
@@ -148,94 +155,115 @@ class CreateUserMutation(graphene.Mutation):
     message = graphene.String()
     @custom_permission_required('userManage.UserAdd')
     def mutate(self, info, username, email, password, role_id, user_type, first_name=None, last_name=None, student_number=None, department=None, faculty=None, date_of_birth=None, profile_picture=None, company_name=None, contact_person=None, website=None, tax_number=None, phone_number=None, address=None, **kwargs):
-        try:
+        with transaction.atomic():
             try:
-                role = CustomRole.objects.get(id=role_id)
-            except CustomRole.DoesNotExist:
-                return CreateUserMutation(success=False, message="Role bulunamadi")
-            
-            user = CustomUser.objects.create_user(
-                username=username,
-                email=email,
-                password=password,
-                role=role
-            )
-            user.save()
+                blob_url = None
+                try:
+                    role = CustomRole.objects.get(id=role_id)
+                except CustomRole.DoesNotExist:
+                    return CreateUserMutation(success=False, message="Role bulunamadi")
+                
+                if profile_picture:
+                    try:
+                        blob_service_client = BlobServiceClient.from_connection_string(settings.AZURE_CONNECTION_STRING)
+                        container_name = "profile-pictures"
+                        try:
+                            blob_service_client.create_container(container_name)
+                        except Exception:
+                            pass
+                        container_client = blob_service_client.get_container_client(container_name)
+                        unique_filename = f"{uuid.uuid4()}_{profile_picture.name}"
+                        blob_client = container_client.get_blob_client(unique_filename)
 
-            site_url = 'https://site-url.com'
+                        blob_client.upload_blob(profile_picture, overwrite=True)
 
-            if user_type.lower() == 'admin':
-                user.is_superuser = True
-                user.is_staff = True
+                        blob_url = blob_client.url
+                    except Exception as e:
+                        raise Exception(f"Blob yükleme hatası: {str(e)}")
+
+                user = CustomUser.objects.create_user(
+                    username=username,
+                    email=email,
+                    password=password,
+                    role=role
+                )
                 user.save()
 
-            elif user_type.lower() == 'student':
-                Student.objects.create(
-                                    user=user,
-                                    first_name=first_name,
-                                    last_name=last_name,
-                                    student_number=student_number,
-                                    department=department,
-                                    faculty=faculty,
-                                    phone_number=phone_number,
-                                    address=address,
-                                    date_of_birth=date_of_birth
-                                )
-                context = {
-                    'title': 'Öğrenci Kaydı Başarılı',
-                    'header_text': 'Öğrenci Kaydı Başarılı',
-                    'name': f"{first_name} {last_name}",
-                    'email': email,
-                    'password': password,
-                    'site_url': site_url,
-                    'header_color': '#0056b3',
-                    'button_color': '#0056b3',
-                    'accent_color': '#0056b3',
-                    'custom_message': '<p>Staj sistemine kaydolduğunuz için teşekkür ederiz. Staj başvurularınızı yapmaya başlayabilirsiniz.</p>'
-                }
-                subject = 'Öğrenci Kaydı Başarılı'
-            elif user_type.lower() == 'company':
-                Company.objects.create(
-                                    user=user,
-                                    company_name=company_name,
-                                    contact_person=contact_person,
-                                    phone_number=phone_number,
-                                    address=address,
-                                    website=website,
-                                    tax_number=tax_number
-                                )
-                
-                context = {
-                    'title': 'Şirket Kaydı Başarılı',
-                    'header_text': 'Şirket Kaydı Başarılı',
-                    'name': contact_person,
-                    'email': email,
-                    'password': password,
-                    'site_url': site_url,
-                    'header_color': '#28a745',  # Yeşil tema
-                    'button_color': '#28a745',
-                    'accent_color': '#28a745',
-                    'custom_message': f'<p>Staj sistemine kaydolduğunuz için teşekkür ederiz. <strong>{company_name}</strong> şirketinin staj başvurularını değerlendirmeye başlayabilirsiniz.</p>'
-                }
-                
-                subject = 'Şirket Kaydı Başarılı'
-            
-            html_message = render_to_string('emails/email.html', context)
-            plain_message = strip_tags(html_message)
+                site_url = 'https://site-url.com'
 
-            send_mail(
-                subject=subject,
-                message=plain_message,
-                from_email=settings.DEFAULT_FROM_EMAIL,
-                recipient_list=[email],
-                fail_silently=False,
-                html_message=html_message
-            )
-            
-            return CreateUserMutation(message = "User created successfully")
-        except Exception as e:
-            raise Exception(f"Error creating user: {str(e)}")
-    
+                if user_type.lower() == 'admin':
+                    user.is_superuser = True
+                    user.is_staff = True
+                    user.save()
+
+                elif user_type.lower() == 'student':
+                    Student.objects.create(
+                                        user=user,
+                                        first_name=first_name,
+                                        last_name=last_name,
+                                        student_number=student_number,
+                                        department=department,
+                                        faculty=faculty,
+                                        phone_number=phone_number,
+                                        address=address,
+                                        date_of_birth=date_of_birth,
+                                        profile_picture=blob_url
+                                    )
+                    context = {
+                        'title': 'Öğrenci Kaydı Başarılı',
+                        'header_text': 'Öğrenci Kaydı Başarılı',
+                        'name': f"{first_name} {last_name}",
+                        'email': email,
+                        'password': password,
+                        'site_url': site_url,
+                        'header_color': '#0056b3',
+                        'button_color': '#0056b3',
+                        'accent_color': '#0056b3',
+                        'custom_message': '<p>Staj sistemine kaydolduğunuz için teşekkür ederiz. Staj başvurularınızı yapmaya başlayabilirsiniz.</p>'
+                    }
+                    subject = 'Öğrenci Kaydı Başarılı'
+                elif user_type.lower() == 'company':
+                    Company.objects.create(
+                                        user=user,
+                                        company_name=company_name,
+                                        contact_person=contact_person,
+                                        phone_number=phone_number,
+                                        address=address,
+                                        website=website,
+                                        tax_number=tax_number
+                                    )
+                    
+                    context = {
+                        'title': 'Şirket Kaydı Başarılı',
+                        'header_text': 'Şirket Kaydı Başarılı',
+                        'name': contact_person,
+                        'email': email,
+                        'password': password,
+                        'site_url': site_url,
+                        'header_color': '#28a745', 
+                        'button_color': '#28a745',
+                        'accent_color': '#28a745',
+                        'custom_message': f'<p>Staj sistemine kaydolduğunuz için teşekkür ederiz. <strong>{company_name}</strong> şirketinin staj başvurularını değerlendirmeye başlayabilirsiniz.</p>'
+                    }
+                    
+                    subject = 'Şirket Kaydı Başarılı'
+                
+                html_message = render_to_string('emails/email.html', context)
+                plain_message = strip_tags(html_message)
+
+                send_mail(
+                    subject=subject,
+                    message=plain_message,
+                    from_email=settings.DEFAULT_FROM_EMAIL,
+                    recipient_list=[email],
+                    fail_silently=False,
+                    html_message=html_message
+                )
+                
+                return CreateUserMutation(message = "User created successfully")
+            except Exception as e:
+                raise Exception(f"Error creating user: {str(e)}")
+        
 #-------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 class UserManageQuery(graphene.ObjectType):
     user = graphene.relay.Node.Field(CustomUserNode)
