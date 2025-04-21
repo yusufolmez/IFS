@@ -172,6 +172,8 @@ class CreateUserMutation(graphene.Mutation):
                         except Exception:
                             pass
                         container_client = blob_service_client.get_container_client(container_name)
+                        if not profile_picture.name:
+                            raise Exception("Yüklenen dosyanın ismi boş. Lütfen geçerli bir dosya yükleyin.")
                         unique_filename = f"{uuid.uuid4()}_{profile_picture.name}"
                         blob_client = container_client.get_blob_client(unique_filename)
 
