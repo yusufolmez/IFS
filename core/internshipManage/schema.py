@@ -103,13 +103,16 @@ class CreateInternshipDiary(graphene.Mutation):
         hours_worked = graphene.Decimal(required=True)
         day_number = graphene.Int(required=True)
         status = DiaryStatusEnum(required=True)
+        text = graphene.String(required=False)
+        tasks = graphene.String(required=False)
+        feedback = graphene.String(required=False)
 
     internship_diary = graphene.Field(InternshipDiaryNode)
     success = graphene.Boolean()
     message = graphene.String()
 
     @custom_permission_required('internshipManage.InternshipDiaryAdd')
-    def mutate(self, info, internship_id, date, hours_worked, day_number, status):
+    def mutate(self, info, internship_id, date, hours_worked, day_number,text, tasks, feedback, status):
         try:
             internship = Internship.objects.get(id=internship_id)
 
@@ -125,7 +128,7 @@ class CreateInternshipDiary(graphene.Mutation):
                     message=f"{day_number} numaralı bir günlük zaten mevcut."
             )
 
-            if hours_worked < 0 and hours_worked > 24:
+            if hours_worked < 0 or hours_worked > 24:
                 return CreateInternshipDiary(
                     success=False, 
                     message="Calisma saati 0 ile 24 saat arasinda olmali."
@@ -135,7 +138,10 @@ class CreateInternshipDiary(graphene.Mutation):
                 date=date,
                 hours_worked=hours_worked,
                 day_number=day_number,
-                status=status.value
+                status=status.value,
+                text=text,
+                tasks=tasks,
+                feedback=feedback
             )
             diary.save()
             return CreateInternshipDiary(success=True, internship_diary=diary, message="Staj gunlugu kaydi basariyla olusturuldu.")

@@ -30,6 +30,8 @@ class InternshipDiary(BaseModel):
     hours_worked = models.DecimalField(max_digits=5, decimal_places=2)
     day_number = models.IntegerField() 
     status = models.CharField(max_length=20, choices=StatusChoices.choices, default=StatusChoices.Draft)
+    text = models.TextField(null=True, blank=True)
+    tasks = models.CharField(max_length=255, null=True, blank=True)
     feedback = models.TextField(null=True, blank=True)  
     
     def __str__(self):
