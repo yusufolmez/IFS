@@ -1,3 +1,72 @@
-core/db.sqlite3
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
 
+# Cython debug symbols
+cython_debug/
+
+# Django stuff:
+*.log
+*.pot
+*.pyc
+*.pyo
+*.sqlite3
+db.sqlite3
+local_settings.py
+media/
+staticfiles/
+static/
+
+# If you're using Django's default file-based cache:
+django_cache/
+
+# Graphene / GraphQL related
+*.graphql
+*.gql
+schema.graphql
+
+# VSCode
+.vscode/
+
+# PyCharm
+.idea/
+
+# Jupyter Notebook
+.ipynb_checkpoints/
+
+# Env & deps
 .env
+.venv
+./venv/
+venv/
+ENV/
+env/
+*.egg-info/
+
+# pip
+pip-log.txt
+
+# Coverage reports
+htmlcov/
+.tox/
+.coverage
+coverage.xml
+*.cover
+
+# Mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Pytest
+.cache/
+.pytest_cache/
+
+# Testing artifacts
+nosetests.xml
+test_output/
+
+# OS files
+.DS_Store
+Thumbs.db
