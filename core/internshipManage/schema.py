@@ -6,6 +6,11 @@ from userManage.utils.jwt_payload import custom_permission_required
 from userManage.models import Student, Company
 from .models import Internship, InternshipDiary, Evaulation
 from .utils import calculate_total_working_days
+
+
+
+
+
 class InternshipNode(DjangoObjectType):
     class Meta:
         model = Internship
@@ -276,6 +281,56 @@ class CreateEvaulation(graphene.Mutation):
         
 
 
+class UpdateInternship(graphene.Mutation):
+    class Arguments:
+        internship_id = graphene.ID(required=True)
+        start_date = graphene.Date()
+        end_date = graphene.Date()
+        status = graphene.String()
+
+    internship = graphene.Field(InternshipNode)
+    success = graphene.Boolean()
+    message = graphene.String()
+
+    @classmethod
+    def mutate(cls, root, info, internship_id, **kwargs):
+        try:
+            internship = Internship.objects.get(id=internship_id)
+
+            for attr, value in kwargs.items():
+                if value is not None:
+                    setattr(internship, attr, value)
+
+            internship.save()
+            return UpdateInternship(success=True, message="Staj güncellendi.", internship=internship)
+
+        except Internship.DoesNotExist:
+            return UpdateInternship(success=False, message="Staj bulunamadı.")
+        
+
+        
+
+
+
+
+class DeleteInternship(graphene.Mutation):  # ✔️ Aynı seviyede olmalı
+    class Arguments:
+        intership_id = graphene.ID(required=True)
+
+    success = graphene.Boolean()
+    message = graphene.String()
+
+    @classmethod
+    def mutate(cls, root, info, internship_id):
+        try:
+            internship = Internship.objects.get(id=internship_id)
+            internship.delete()
+            return DeleteInternship(success=True, message="Staj başarıyla silindi.")
+        except Internship.DoesNotExist:
+            return DeleteInternship(success=False, message="Staj bulunamadı.")
+
+
+
 #-------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 class InternshipQuery(graphene.ObjectType):
     internship = graphene.relay.Node.Field(InternshipNode)
@@ -294,3 +349,8 @@ class InternshipMutation(graphene.ObjectType):
     update_internship_diary_status = InternshipDiaryStatusUpdate.Field()
 
     create_evaulation = CreateEvaulation.Field()
+
+    update_internship = UpdateInternship.Field()
+    delete_internship = DeleteInternship.Field()
+
+   
