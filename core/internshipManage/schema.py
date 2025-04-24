@@ -150,6 +150,85 @@ class CreateInternshipDiary(graphene.Mutation):
         except Exception as e:
             return CreateInternshipDiary(success=False, message=str(e))
         
+class UpdateInternshipDiary(graphene.Mutation):
+    class Arguments:
+        internship_diary_id = graphene.ID(required=True)
+        date = graphene.Date(required=False)
+        hours_worked = graphene.Decimal(required=False)
+        day_number = graphene.Int(required=False)
+        status = DiaryStatusEnum(required=False)
+        text = graphene.String(required=False)
+        tasks = graphene.String(required=False)
+        feedback = graphene.String(required=False)
+
+    internship_diary = graphene.Field(InternshipDiaryNode)
+    success = graphene.Boolean()
+    message = graphene.String()
+
+    @custom_permission_required('internshipManage.InternshipDiaryUpdate')
+    def mutate(self, info, internship_diary_id, date=None, hours_worked=None, day_number=None, text=None, tasks=None, feedback=None, status=None):
+        try:
+            diary = InternshipDiary.objects.get(id=internship_diary_id)
+
+            if date:
+                if InternshipDiary.objects.filter(date=date).exists() and diary.date != date:   
+                    return CreateInternshipDiary(
+                        success=False, 
+                        message=f"{date} tarihli bir günlük zaten mevcut."
+            )
+                diary.date = date
+            if hours_worked:
+                if hours_worked < 0 or hours_worked > 24:
+                    return UpdateInternshipDiary(success=False, message="Calisma saati 0 ile 24 saat arasinda olmali.")
+                diary.hours_worked = hours_worked
+            if day_number:
+                if InternshipDiary.objects.filter(day_number=day_number).exists() and diary.day_number != day_number:
+                    return CreateInternshipDiary(
+                        success=False, 
+                        message=f"{day_number} numaralı bir günlük zaten mevcut."
+            )
+                diary.day_number = day_number
+            if status:
+                diary.status = status.value
+            if text:
+                diary.text = text
+            if tasks:
+                diary.tasks = tasks
+            if feedback:
+                diary.feedback = feedback
+
+            diary.save()
+            return UpdateInternshipDiary(success=True, internship_diary=diary, message="Staj gunlugu kaydi basariyla guncellendi.")
+        except InternshipDiary.DoesNotExist:
+            return UpdateInternshipDiary(success=False, message="Staj gunlugu bulunamadi.")
+        except Exception as e:
+            return UpdateInternshipDiary(success=False, message=str(e))
+
+class InternshipDiaryStatusUpdate(graphene.Mutation):
+    class Arguments:
+        internship_diary_id = graphene.ID(required=True)
+        status = DiaryStatusEnum(required=True)
+
+    success = graphene.Boolean()
+    message = graphene.String()
+    internship_diary = graphene.Field(InternshipDiaryNode)
+
+    @custom_permission_required('internshipManage.InternshipDiaryUpdate')
+    def mutate(self, info, internship_diary_id, status):
+        try:
+            diary = InternshipDiary.objects.get(id=internship_diary_id)
+            if status not in [DiaryStatusEnum.DRAFT.value, DiaryStatusEnum.SUBMITTED.value]:
+                return InternshipDiaryStatusUpdate(success=False, message="Gecersiz durum. 'draft' veya 'submitted' olmalidir.")
+            if diary.status == status.value:
+                return InternshipDiaryStatusUpdate(success=False, message="Staj gunlugu zaten bu durumda.")
+            diary.status = status.value
+            diary.save()
+            return InternshipDiaryStatusUpdate(success=True, internship_diary=diary, message="Staj gunlugu durumu basariyla guncellendi.")
+        except InternshipDiary.DoesNotExist:
+            return InternshipDiaryStatusUpdate(success=False, message="Staj gunlugu bulunamadi.")
+        except Exception as e:
+            return InternshipDiaryStatusUpdate(success=False, message=str(e))
+
 class CreateEvaulation(graphene.Mutation):
     class Arguments:
         internship_id = graphene.ID(required=True)
@@ -194,6 +273,9 @@ class CreateEvaulation(graphene.Mutation):
             return CreateEvaulation(success=False, message="Staj bulunamadi.")
         except Exception as e:
             return CreateEvaulation(success=False, message=str(e))
+        
+
+
 #-------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 class InternshipQuery(graphene.ObjectType):
     internship = graphene.relay.Node.Field(InternshipNode)
@@ -208,4 +290,7 @@ class InternshipQuery(graphene.ObjectType):
 class InternshipMutation(graphene.ObjectType):
     create_internship_application = CreateInternshipApplication.Field()
     create_internship_diary = CreateInternshipDiary.Field()
+    update_internship_diary = UpdateInternshipDiary.Field()
+    update_internship_diary_status = InternshipDiaryStatusUpdate.Field()
+
     create_evaulation = CreateEvaulation.Field()
