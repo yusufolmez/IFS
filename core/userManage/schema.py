@@ -3,7 +3,7 @@ import graphene
 from .utils.jwt_payload import generate_access_token, generate_refresh_token, custom_permission_required
 import base64
 from graphene_django.types import DjangoObjectType
-from graphene_django.filter import DjangoFilterConnectionField
+from graphene_django import DjangoConnectionField
 import jwt
 from django.conf import settings
 from userManage.utils.blacklist import TokenBlacklist
@@ -269,13 +269,13 @@ class CreateUserMutation(graphene.Mutation):
 #-------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 class UserManageQuery(graphene.ObjectType):
     user = graphene.relay.Node.Field(CustomUserNode)
-    users = DjangoFilterConnectionField(CustomUserNode)
+    users = DjangoConnectionField(CustomUserNode)
 
     student = graphene.relay.Node.Field(StudentNode)
-    students = DjangoFilterConnectionField(StudentNode)
+    students = DjangoConnectionField(StudentNode)
 
     company = graphene.relay.Node.Field(CompanyNode)
-    companies = DjangoFilterConnectionField(CompanyNode)
+    companies = DjangoConnectionField(CompanyNode)
     
     def resolve_allUsers(self, info, id=None , **kwargs):
         if id:
