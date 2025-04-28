@@ -72,12 +72,19 @@ class UserType(DjangoObjectType):
 class AuthMutation(graphene.Mutation):
     tokens = graphene.Field(TokenType)
     class Arguments:
-        username = graphene.String(required=True)
+        usernameoremail = graphene.String(required=True)
         password = graphene.String(required=True)
     
-    def mutate(self,info,username,password):
+    def mutate(self,info,usernameoremail,password):
+        if '@' in usernameoremail:
+            try:
+                user = CustomUser.objects.get(email=usernameoremail)
+                username = user.username
+            except CustomUser.DoesNotExist:
+                raise Exception("Email ile kullanici bulunamadi.")
+        else: 
+            username = usernameoremail
         user = authenticate(username=username,password=password)
-
         if user is None:
             raise Exception("Gecersiz giris bilgileri!")
         access_token = generate_access_token(user)
@@ -123,6 +130,7 @@ class LogoutMutation(graphene.Mutation):
                 return LogoutMutation(success=False, message="Cikis islemi basarisiz.")
         except Exception as e:
             return LogoutMutation(success=False, message=str(e))
+        
 #-------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
 class CreateUserMutation(graphene.Mutation):
@@ -276,6 +284,14 @@ class UserManageQuery(graphene.ObjectType):
 
     company = graphene.relay.Node.Field(CompanyNode)
     companies = DjangoConnectionField(CompanyNode)
+
+    me = graphene.Field(UserType)
+
+    def resolve_me(self, info):
+        user = info.context.user
+        if not user.is_authenticated:
+            raise Exception("Lütfen giriş yapınız.")
+        return user
     
     def resolve_allUsers(self, info, id=None , **kwargs):
         if id:

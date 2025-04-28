@@ -63,15 +63,16 @@ class CreateInternshipApplication(graphene.Mutation):
         end_date = graphene.Date(required=True)
         position = graphene.String(required=True)
         description = graphene.String(required=True)
-        status = InternshipStatusEnum(required=True)
 
     internship = graphene.Field(InternshipNode)
     success = graphene.Boolean()
     message = graphene.String()
     total_working_days = graphene.Int()
+    
     @custom_permission_required('internshipManage.InternshipApplicationAdd')
-    def mutate(self, info,  company_id, start_date, end_date, position, description, status):
+    def mutate(self, info,  company_id, start_date, end_date, position, description):
         try:
+            status = InternshipStatusEnum()
             user = info.context.user
             student = Student.objects.get(user=user)
             company = Company.objects.get(id=company_id)
@@ -86,7 +87,7 @@ class CreateInternshipApplication(graphene.Mutation):
                 position=position,
                 description=description,
                 total_working_days=total_working_days,
-                status=status.value
+                status=status.PENDING.value
             )
             internship.save()
             return CreateInternshipApplication(success=True, internship=internship, message="Staj basvuru kaydi basariyla olusturuldu.")
@@ -111,7 +112,6 @@ class UpdateInternshipApplication(graphene.Mutation):
         try:
             user = info.context.user
             internship = Internship.objects.get(id=internship_id)
-
             if internship.student.user != user:
                 return UpdateInternshipApplication(success=False, message="Bu staj sadece stajyeri tarafından güncellenebilir.")
 
