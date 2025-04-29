@@ -13,6 +13,7 @@ https://docs.djangoproject.com/en/5.2/ref/settings/
 from datetime import timedelta
 from dotenv import load_dotenv
 import os
+from urllib.parse import quote_plus
 from pathlib import Path
 
 load_dotenv()
@@ -156,3 +157,23 @@ DEFAULT_FROM_EMAIL = EMAIL_HOST_USER
 
 AZURE_CONNECTION_STRING = os.getenv("azure_conn_str")
 
+
+# Rate Limiting için cache ayarı
+REDIS_PASSWORD = quote_plus(os.getenv('REDIS_PASSWORD', ''))
+
+CACHES = {
+    'default': {
+        'BACKEND': 'django_redis.cache.RedisCache',
+        'LOCATION': f'redis://:{REDIS_PASSWORD}@redis:6379/1',
+        'OPTIONS': {
+            'CLIENT_CLASS': 'django_redis.client.DefaultClient',
+            'SOCKET_CONNECT_TIMEOUT': 5,
+            'SOCKET_TIMEOUT': 5,
+            'RETRY_ON_TIMEOUT': True,
+            'MAX_CONNECTIONS': 1000,
+            'CONNECTION_POOL_KWARGS': {'max_connections': 100}
+        }
+    }
+}
+# Cache timeout süresi (saniye cinsinden)
+CACHE_TTL = 60 
