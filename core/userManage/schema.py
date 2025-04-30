@@ -27,6 +27,7 @@ from .utils.validators import UserValidator
 from .utils.logging import log_error, log_info
 from django.core.cache import cache
 from django.core.cache.backends.dummy import DummyCache
+from datetime import datetime
 
 #-------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
@@ -289,7 +290,7 @@ class CreateUserMutation(graphene.Mutation):
             cache_key = f"create_user_{kwargs.get('email', '')}"
             if cache.get(cache_key):
                 raise Exception("Çok sık kullanıcı oluşturma denemesi yapıyorsunuz. Lütfen bekleyin.")
-            cache.set(cache_key, True, 60)
+            cache.set(cache_key, True, 15)
 
             cls._validate_user_data(kwargs)
 
@@ -382,17 +383,35 @@ class UpdateProfileByAdminMutation(graphene.Mutation):
     success = graphene.Boolean()
     message = graphene.String()
 
-    def mutate (self, info, **kwargs):
+    @classmethod
+    def mutate(cls, root, info, **kwargs):
         try:
             user = CustomUser.objects.get(id=kwargs.get('user_id'))
             if user.role.name == 'admin':
                 raise Exception("Admin kullanıcısı güncellenemez.")
             if len(kwargs.keys()) == 1:
                 raise Exception("Herhangi bir güncelleme yapılmadı. En az bir alan doldurulmalıdır.")
+
+            if 'usernameoremail' in kwargs:
+                user.username = kwargs['usernameoremail']
+            if 'email' in kwargs:
+                user.email = kwargs['email']
+            if 'password' in kwargs:
+                user.set_password(kwargs['password'])
+            if 'role_id' in kwargs:
+                try:
+                    role = CustomRole.objects.get(id=kwargs['role_id'])
+                    user.role = role
+                except CustomRole.DoesNotExist:
+                    raise Exception("Rol bulunamadı.")
+            
+            user.save()
+
             if user.role.name == 'student':
                 student = Student.objects.get(user=user)
                 if not student:
-                    raise Exception("Ogrenci bulunamadı.")
+                    raise Exception("Öğrenci bulunamadı.")
+                
                 student.first_name = kwargs.get('first_name', student.first_name)
                 student.last_name = kwargs.get('last_name', student.last_name)
                 student.student_number = kwargs.get('student_number', student.student_number)
@@ -401,28 +420,45 @@ class UpdateProfileByAdminMutation(graphene.Mutation):
                 student.phone_number = kwargs.get('phone_number', student.phone_number)
                 student.address = kwargs.get('address', student.address)
                 student.date_of_birth = kwargs.get('date_of_birth', student.date_of_birth)
+                
+                if 'profile_picture' in kwargs:
+                    profile_pic_url = upload_to_blob(kwargs['profile_picture'], 'profile-pictures')
+                    student.profile_picture = profile_pic_url
+                
                 student.save()
                 return UpdateProfileByAdminMutation(success=True, message="Öğrenci bilgileri güncellendi.")
+
             if user.role.name == 'company':
                 company = Company.objects.get(user=user)
                 if not company:
                     raise Exception("Şirket bulunamadı.")
+                
                 company.company_name = kwargs.get('company_name', company.company_name)
                 company.contact_person = kwargs.get('contact_person', company.contact_person)
                 company.phone_number = kwargs.get('phone_number', company.phone_number)
                 company.address = kwargs.get('address', company.address)
                 company.website = kwargs.get('website', company.website)
                 company.tax_number = kwargs.get('tax_number', company.tax_number)
+                
+                if 'profile_picture' in kwargs:
+                    profile_pic_url = upload_to_blob(kwargs['profile_picture'], 'profile-pictures')
+                    company.profile_picture = profile_pic_url
+                
                 company.save()
                 return UpdateProfileByAdminMutation(success=True, message="Şirket bilgileri güncellendi.")
+
         except CustomUser.DoesNotExist:
             raise Exception("Kullanıcı bulunamadı.")
+        except Exception as e:
+            log_error("Profil güncelleme hatası", {"error": str(e)})
+            raise Exception(f"Profil güncellenirken hata oluştu: {str(e)}")
         
 class UpdateMyProfileMutation(graphene.Mutation):
     class Arguments:
         username = graphene.String(required=False)
-        email = graphene.String(required=False)
         password = graphene.String(required=False)
+        new_password = graphene.String(required=False)
+        confirm_password = graphene.String(required=False)
         first_name = graphene.String(required=False)
         last_name = graphene.String(required=False)
         student_number = graphene.String(required=False)
@@ -442,12 +478,14 @@ class UpdateMyProfileMutation(graphene.Mutation):
 
     @staticmethod
     def _validate_input_data(data):
-        if 'email' in data:
-            UserValidator.validate_email(data['email'])
         if 'phone_number' in data:
             UserValidator.validate_phone(data['phone_number'])
-        if 'password' in data:
-            UserValidator.validate_password(data['password'])
+        if 'new_password' in data:
+            UserValidator.validate_password(data['new_password'])
+            if 'confirm_password' not in data:
+                raise Exception("Yeni şifre onayı gereklidir.")
+            if data['new_password'] != data['confirm_password']:
+                raise Exception("Şifreler eşleşmiyor.")
 
     @staticmethod
     def _update_student_profile(student, data):
@@ -492,34 +530,83 @@ class UpdateMyProfileMutation(graphene.Mutation):
     def mutate(cls, root, info, **kwargs):
         try:
             user = info.context.user
+            if not user.is_authenticated:
+                raise Exception(ERROR_MESSAGES['AUTHENTICATION_REQUIRED'])
+
+            token_user_id = info.context.user.id
+            if token_user_id != user.id:
+                log_error("Kullanıcı ID uyuşmazlığı", {
+                    "token_user_id": token_user_id,
+                    "request_user_id": user.id
+                })
+                raise Exception("Geçersiz kullanıcı oturumu.")
+
             cache = get_cache()
             cache_key = f"profile_update_{user.id}"
             if cache.get(cache_key):
                 raise Exception("Çok sık güncelleme yapıyorsunuz. Lütfen bekleyin.")
             cache.set(cache_key, True, 15)
 
-            if not user.is_authenticated:
-                raise Exception(ERROR_MESSAGES['AUTHENTICATION_REQUIRED'])
+            user_role = user.role.name.lower()
+            log_info("Kullanıcı rolü kontrolü", {
+                "user_id": user.id,
+                "role": user_role,
+                "raw_role": user.role.name,
+                "token_user_id": token_user_id
+            })
 
             cls._validate_input_data(kwargs)
 
             with transaction.atomic():
-                if user.role.name == USER_TYPES['STUDENT']:
+                if 'new_password' in kwargs:
+                    if not user.check_password(kwargs.get('password', '')):
+                        raise Exception("Mevcut şifre yanlış.")
+                    user.set_password(kwargs['new_password'])
+                    user.save()
+                    
+                    try:
+                        subject = "Şifre Değişikliği Bildirimi"
+                        context = {
+                            'name': user.username,
+                            'site_url': 'https://site-url.com',
+                        }
+                        html_message = render_to_string('emails/password_change_email.html', context)
+                        plain_message = strip_tags(html_message)
+                        send_mail(
+                            subject,
+                            plain_message,
+                            settings.DEFAULT_FROM_EMAIL,
+                            [user.email],
+                            html_message=html_message,
+                            fail_silently=True,
+                        )
+                        log_info("Şifre değişikliği e-postası gönderildi", {"user_id": user.id})
+                    except Exception as e:
+                        log_error("Şifre değişikliği e-postası gönderilemedi", {"error": str(e)})
+
+                if 'username' in kwargs:
+                    user.username = kwargs['username']
+                user.save()
+
+                if user_role == 'student':
                     try:
                         student = Student.objects.get(user=user)
                         message = cls._update_student_profile(student, kwargs)
                     except Student.DoesNotExist:
                         raise Exception(ERROR_MESSAGES['STUDENT_NOT_FOUND'])
 
-                elif user.role.name == USER_TYPES['COMPANY']:
+                elif user_role == 'company':
                     try:
                         company = Company.objects.get(user=user)
                         message = cls._update_company_profile(company, kwargs)
                     except Company.DoesNotExist:
                         raise Exception(ERROR_MESSAGES['COMPANY_NOT_FOUND'])
 
+                elif user_role == 'admin':
+                    raise Exception("Admin kullanıcıları için profil güncelleme işlemi yapılamaz.")
+
                 else:
-                    raise Exception(ERROR_MESSAGES['INVALID_USER_TYPE'])
+                    raise Exception(f"Geçersiz kullanıcı tipi: {user_role}")
 
                 return cls(success=True, message=message)
 
@@ -556,14 +643,6 @@ class UserManageQuery(graphene.ObjectType):
         if not user.is_authenticated:
             raise Exception("Lütfen giriş yapınız.")
         return user
-    
-    def resolve_allUsers(self, info, id=None , **kwargs):
-        if id:
-            user = CustomUser.objects.filter(id=id)
-            if not user.exists():
-                raise Exception("User not found")
-            return user
-        return CustomUser.objects.all()
                 
 #-------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 class UserManageMutation(graphene.ObjectType):
