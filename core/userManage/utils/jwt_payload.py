@@ -3,20 +3,33 @@ from django.conf import settings
 from functools import wraps
 import jwt
 
-def custom_permission_required(required_permiision):
-    def decoreator(func):
+from functools import wraps
+from django.contrib.auth.models import AnonymousUser
+
+def custom_permission_required(permission):
+    def decorator(func):
         @wraps(func)
-        def wrapper(root,info,*args,**kwargs):
+        def wrapper(*args, **kwargs):
+            # Classmethod: args = (cls, root, info, …)
+            # Normal resolver: args = (root, info, …)
+            # info objesini tespit edelim:
+            info = None
+            if len(args) >= 3 and hasattr(args[2], 'context'):
+                info = args[2]
+            elif len(args) >= 2 and hasattr(args[1], 'context'):
+                info = args[1]
+            else:
+                raise Exception("Resolver argümanlarını çözerken hata oluştu.")
             
-            user = info.context.user
+            user = getattr(info.context, 'user', None) or AnonymousUser()
             if not user.is_authenticated:
                 raise Exception("Lütfen giriş yapınız.")
-            if not user.has_perm(required_permiision):
-                raise Exception('Yetkiniz yok')
-            return func(root, info,*args,**kwargs)
+            if not user.has_perm(permission):
+                raise Exception("Yetkiniz yok.")
+            
+            return func(*args, **kwargs)
         return wrapper
-    return decoreator
-
+    return decorator
 def generate_access_token(user):
     payload = {
         'user_id':user.id,

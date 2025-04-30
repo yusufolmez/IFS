@@ -92,15 +92,21 @@ DATABASES = {
 }
 
 GRAPHENE = {
-    'SCHEMA':'core.schema.schema',
+    'SCHEMA': 'core.schema.schema',
     'MIDDLEWARE': [
-        'core.middleware.JWTMiddleware',
+        'graphql_jwt.middleware.JSONWebTokenMiddleware',
     ],
 }
 
+AUTHENTICATION_BACKENDS = [
+    'graphql_jwt.backends.JSONWebTokenBackend',
+    'django.contrib.auth.backends.ModelBackend',
+]
+
 
 GRAPHQL_JWT = {
-    'JWT_PAYLOAD_HANDLER': 'userManage.utils.custom_jwt_payload'
+    'JWT_PAYLOAD_HANDLER': 'userManage.utils.custom_jwt_payload',
+    "JWT_AUTH_HEADER_PREFIX": "Bearer", 
 }
 
 # Password validation
