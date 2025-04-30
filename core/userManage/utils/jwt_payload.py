@@ -10,9 +10,6 @@ def custom_permission_required(permission):
     def decorator(func):
         @wraps(func)
         def wrapper(*args, **kwargs):
-            # Classmethod: args = (cls, root, info, …)
-            # Normal resolver: args = (root, info, …)
-            # info objesini tespit edelim:
             info = None
             if len(args) >= 3 and hasattr(args[2], 'context'):
                 info = args[2]
@@ -30,6 +27,7 @@ def custom_permission_required(permission):
             return func(*args, **kwargs)
         return wrapper
     return decorator
+
 def generate_access_token(user):
     payload = {
         'user_id':user.id,
@@ -49,3 +47,16 @@ def generate_refresh_token(user):
         'token_type':'refresh',
     }
     return jwt.encode(payload, settings.SECRET_KEY, algorithm='HS256')
+
+def custom_jwt_payload(user, context=None):
+    try:
+        user_obj = user
+        return {
+            'user_id': user_obj.id,
+            'user_role': user_obj.role.name.lower(),
+            'exp': datetime.utcnow() + timedelta(minutes=15),
+            'iat': datetime.utcnow(),
+            'token_type': 'access'
+        }
+    except Exception as e:
+        return None
