@@ -18,6 +18,15 @@ def custom_permission_required(permission):
             else:
                 raise Exception("Resolver argümanlarını çözerken hata oluştu.")
             
+            # Token bilgilerini context'ten al
+            token_payload = getattr(info.context, 'token_payload', None)
+            if token_payload:
+                user_id = token_payload.get('user_id')
+                if user_id:
+                    user = info.context.user
+                    if user.id != user_id:
+                        raise Exception("Token ve kullanıcı bilgileri uyuşmuyor.")
+            
             user = getattr(info.context, 'user', None) or AnonymousUser()
             if not user.is_authenticated:
                 raise Exception("Lütfen giriş yapınız.")
@@ -32,7 +41,7 @@ def generate_access_token(user):
     payload = {
         'user_id':user.id,
         'user_role':user.role.name,
-        'exp': datetime.utcnow() + timedelta(minutes=15),
+        'exp': datetime.utcnow() + timedelta(hours=1),
         'iat': datetime.utcnow(),
         'token_type':'access',
     }

@@ -14,20 +14,16 @@ from .models import CustomRole, CustomUser, Student, Company
 from django.core.mail import send_mail
 from django.template.loader import render_to_string
 from django.utils.html import strip_tags
-from django.utils.safestring import mark_safe
 
 from django.db import transaction
 from graphene_file_upload.scalars import Upload
 
-from azure.storage.blob import BlobServiceClient
-import uuid
-
 from .utils.constants import USER_TYPES, ERROR_MESSAGES
 from .utils.validators import UserValidator
-from .utils.logging import log_error, log_info
+from core.utils.logging import get_logger
 from django.core.cache import cache
-from django.core.cache.backends.dummy import DummyCache
-from datetime import datetime
+
+logger = get_logger(__name__)
 
 #-------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
@@ -85,7 +81,7 @@ def get_cache():
         cache.get('test_key')
         return cache
     except Exception as e:
-        log_error("Redis bağlantı hatası", {"error": str(e)})
+        logger.error("Redis bağlantı hatası", extra={"error": str(e)})
         return None
 
 class AuthMutation(graphene.Mutation):
@@ -99,18 +95,11 @@ class AuthMutation(graphene.Mutation):
         try:
             cache = get_cache()
             if cache is None:
-                log_error("Rate limiting devre dışı - Redis bağlantısı yok")
+                logger.error("Rate limiting devre dışı - Redis bağlantısı yok")
                 raise Exception("Sistem şu anda kullanılamıyor. Lütfen daha sonra tekrar deneyin.")
 
             cache_key = f"auth_attempt_{usernameoremail}"
             attempts = cache.get(cache_key)
-            
-            log_info("Redis Cache Durumu", {
-                "cache_key": cache_key,
-                "current_attempts": attempts,
-                "cache_connection": "active" if cache else "inactive",
-                "usernameoremail": usernameoremail
-            })
             
             if attempts is None:
                 attempts = 0
@@ -118,14 +107,9 @@ class AuthMutation(graphene.Mutation):
             else:
                 attempts += 1
                 cache.set(cache_key, attempts, 60)
-                log_info("Giriş denemesi artırıldı", {
-                    "usernameoremail": usernameoremail,
-                    "attempts": attempts,
-                    "cache_key": cache_key
-                })
             
             if attempts >= 5:
-                log_error("Çok fazla giriş denemesi", {
+                logger.error("Çok fazla giriş denemesi", extra={
                     "usernameoremail": usernameoremail,
                     "attempts": attempts,
                     "cache_key": cache_key
@@ -137,14 +121,14 @@ class AuthMutation(graphene.Mutation):
                     user = CustomUser.objects.get(email=usernameoremail)
                     username = user.username
                 except CustomUser.DoesNotExist:
-                    log_error("Email ile kullanıcı bulunamadı", {"email": usernameoremail})
+                    logger.error("Email ile kullanıcı bulunamadı", extra={"email": usernameoremail})
                     raise Exception(ERROR_MESSAGES['USER_NOT_FOUND'])
             else: 
                 username = usernameoremail
 
             user = authenticate(username=username, password=password)
             if user is None:
-                log_error("Geçersiz giriş bilgileri", {
+                logger.error("Geçersiz giriş bilgileri", extra={
                     "username": username,
                     "attempts": attempts,
                     "cache_key": cache_key
@@ -152,23 +136,16 @@ class AuthMutation(graphene.Mutation):
                 raise Exception("Geçersiz giriş bilgileri!")
 
             cache.delete(cache_key)
-            log_info("Başarılı giriş - Rate limit sıfırlandı", {
-                "username": username,
-                "cache_key": cache_key
-            })
-
             access_token = generate_access_token(user)
             refresh_token = generate_refresh_token(user)
 
-            log_info("Başarılı giriş", {
-                "user_id": user.id,
-                "username": username,
-                "attempts": attempts
-            })
+            client_ip = info.context.META.get('REMOTE_ADDR', 'Bilinmeyen IP')
+            logger.info(f"Başarılı giriş - Kullanıcı: {user.email} - IP: {client_ip} - Rate limit sıfırlandı")
+
             return cls(tokens=TokenType(access_token=access_token, refresh_token=refresh_token))
 
         except Exception as e:
-            log_error("Giriş işlemi başarısız", {
+            logger.error("Giriş işlemi başarısız", extra={
                 "error": str(e),
                 "usernameoremail": usernameoremail,
                 "attempts": attempts if 'attempts' in locals() else None,
@@ -192,29 +169,29 @@ class RefreshTokenMutation(graphene.Mutation):
 
             payload = jwt.decode(refresh_token, settings.SECRET_KEY, algorithms=['HS256'])
             if payload.get('token_type') != 'refresh':
-                log_error("Geçersiz token tipi", {"token_type": payload.get('token_type')})
+                logger.error("Geçersiz token tipi", extra={"token_type": payload.get('token_type')})
                 raise Exception("Token tipi refresh değil")
             
             try:
                 user = CustomUser.objects.get(id=payload['user_id'])
             except CustomUser.DoesNotExist:
-                log_error("Token için kullanıcı bulunamadı", {"user_id": payload['user_id']})
+                logger.error("Token için kullanıcı bulunamadı", extra={"user_id": payload['user_id']})
                 raise Exception(ERROR_MESSAGES['USER_NOT_FOUND'])
 
             access_token = generate_access_token(user)
             refresh_token = generate_refresh_token(user)
 
-            log_info("Token yenileme başarılı", {"user_id": user.id})
+            logger.info("Token yenileme başarılı", extra={"user_id": user.id})
             return cls(tokens=TokenType(access_token=access_token, refresh_token=refresh_token))
 
         except jwt.ExpiredSignatureError:
-            log_error("Refresh token süresi dolmuş", {"token": refresh_token[:10]})
+            logger.error("Refresh token süresi dolmuş", extra={"token": refresh_token[:10]})
             raise Exception("Refresh token süresi dolmuş.")
         except jwt.InvalidTokenError:
-            log_error("Geçersiz refresh token", {"token": refresh_token[:10]})
+            logger.error("Geçersiz refresh token", extra={"token": refresh_token[:10]})
             raise Exception("Geçersiz refresh token.")
         except Exception as e:
-            log_error("Token yenileme hatası", {"error": str(e)})
+            logger.error("Token yenileme hatası", extra={"error": str(e)})
             raise
         
 class LogoutMutation(graphene.Mutation):
@@ -236,14 +213,14 @@ class LogoutMutation(graphene.Mutation):
 
             token_blacklist = TokenBlacklist()
             if token_blacklist.logout(access_token, refresh_token):
-                log_info("Başarılı çıkış", {"access_token": access_token[:10]})
+                logger.info("Başarılı çıkış", extra={"access_token": access_token[:10]})
                 return cls(success=True, message="Çıkış işlemi başarılı.")
             else:
-                log_error("Çıkış işlemi başarısız", {"access_token": access_token[:10]})
+                logger.error("Çıkış işlemi başarısız", extra={"access_token": access_token[:10]})
                 return cls(success=False, message="Çıkış işlemi başarısız.")
 
         except Exception as e:
-            log_error("Çıkış işlemi hatası", {"error": str(e)})
+            logger.error("Çıkış işlemi hatası", extra={"error": str(e)})
             return cls(success=False, message=str(e))
         
 #-------------------------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -290,7 +267,8 @@ class CreateUserMutation(graphene.Mutation):
             cache_key = f"create_user_{kwargs.get('email', '')}"
             if cache.get(cache_key):
                 raise Exception("Çok sık kullanıcı oluşturma denemesi yapıyorsunuz. Lütfen bekleyin.")
-            cache.set(cache_key, True, 15)
+            cache.set(cache_key, True
+                      , 15)
 
             cls._validate_user_data(kwargs)
 
@@ -304,7 +282,7 @@ class CreateUserMutation(graphene.Mutation):
                 try:
                     role = CustomRole.objects.get(id=role_id)
                 except CustomRole.DoesNotExist:
-                    log_error("Rol bulunamadı", {"role_id": role_id})
+                    logger.error("Rol bulunamadı", extra={"role_id": role_id})
                     return cls(success=False, message="Rol bulunamadı")
 
                 user = CustomUser.objects.create_user(
@@ -347,15 +325,15 @@ class CreateUserMutation(graphene.Mutation):
                     user.save()
                     subject, context = get_admin_mail_context(email, password)
                 else:
-                    log_error("Geçersiz kullanıcı tipi", {"user_type": user_type})
+                    logger.error("Geçersiz kullanıcı tipi", extra={"user_type": user_type})
                     return cls(success=False, message="Geçersiz kullanıcı tipi")
 
                 send_registration_mail(subject, context, email)
-                log_info("Kullanıcı başarıyla oluşturuldu", {"user_id": user.id})
+                logger.info("Kullanıcı başarıyla oluşturuldu", extra={"user_id": user.id})
                 return cls(message="Kullanıcı başarıyla oluşturuldu", success=True, user=user)
 
         except Exception as e:
-            log_error("Kullanıcı oluşturma hatası", {"error": str(e)})
+            logger.error("Kullanıcı oluşturma hatası", extra={"error": str(e)})
             raise Exception(f"Kullanıcı oluşturulurken hata oluştu: {str(e)}")
             
 class UpdateProfileByAdminMutation(graphene.Mutation):
@@ -450,7 +428,7 @@ class UpdateProfileByAdminMutation(graphene.Mutation):
         except CustomUser.DoesNotExist:
             raise Exception("Kullanıcı bulunamadı.")
         except Exception as e:
-            log_error("Profil güncelleme hatası", {"error": str(e)})
+            logger.error("Profil güncelleme hatası", extra={"error": str(e)})
             raise Exception(f"Profil güncellenirken hata oluştu: {str(e)}")
         
 class UpdateMyProfileMutation(graphene.Mutation):
@@ -503,10 +481,10 @@ class UpdateMyProfileMutation(graphene.Mutation):
                 upload_to_blob(data['profile_picture'], 'profile-pictures')
             
             student.save()
-            log_info("Öğrenci profili güncellendi", {"student_id": student.id})
+            logger.info("Öğrenci profili güncellendi", extra={"student_id": student.id})
             return "Öğrenci bilgileri güncellendi."
         except Exception as e:
-            log_error("Öğrenci profili güncellenirken hata oluştu", {"error": str(e)})
+            logger.error("Öğrenci profili güncellenirken hata oluştu", extra={"error": str(e)})
             raise
 
     @staticmethod
@@ -520,10 +498,10 @@ class UpdateMyProfileMutation(graphene.Mutation):
             company.tax_number = data.get('tax_number', company.tax_number)
             
             company.save()
-            log_info("Şirket profili güncellendi", {"company_id": company.id})
+            logger.info("Şirket profili güncellendi", extra={"company_id": company.id})
             return "Şirket bilgileri güncellendi."
         except Exception as e:
-            log_error("Şirket profili güncellenirken hata oluştu", {"error": str(e)})
+            logger.error("Şirket profili güncellenirken hata oluştu", extra={"error": str(e)})
             raise
 
     @classmethod
@@ -535,7 +513,7 @@ class UpdateMyProfileMutation(graphene.Mutation):
 
             token_user_id = info.context.user.id
             if token_user_id != user.id:
-                log_error("Kullanıcı ID uyuşmazlığı", {
+                logger.error("Kullanıcı ID uyuşmazlığı", extra={
                     "token_user_id": token_user_id,
                     "request_user_id": user.id
                 })
@@ -548,7 +526,7 @@ class UpdateMyProfileMutation(graphene.Mutation):
             cache.set(cache_key, True, 15)
 
             user_role = user.role.name.lower()
-            log_info("Kullanıcı rolü kontrolü", {
+            logger.info("Kullanıcı rolü kontrolü", extra={
                 "user_id": user.id,
                 "role": user_role,
                 "raw_role": user.role.name,
@@ -580,9 +558,9 @@ class UpdateMyProfileMutation(graphene.Mutation):
                             html_message=html_message,
                             fail_silently=True,
                         )
-                        log_info("Şifre değişikliği e-postası gönderildi", {"user_id": user.id})
+                        logger.info("Şifre değişikliği e-postası gönderildi", extra={"user_id": user.id})
                     except Exception as e:
-                        log_error("Şifre değişikliği e-postası gönderilemedi", {"error": str(e)})
+                        logger.error("Şifre değişikliği e-postası gönderilemedi", extra={"error": str(e)})
 
                 if 'username' in kwargs:
                     user.username = kwargs['username']
@@ -611,10 +589,10 @@ class UpdateMyProfileMutation(graphene.Mutation):
                 return cls(success=True, message=message)
 
         except CustomUser.DoesNotExist:
-            log_error("Kullanıcı bulunamadı", {"user_id": user.id})
+            logger.error("Kullanıcı bulunamadı", extra={"user_id": user.id})
             raise Exception(ERROR_MESSAGES['USER_NOT_FOUND'])
         except Exception as e:
-            log_error("Profil güncellenirken hata oluştu", {"error": str(e)})
+            logger.error("Profil güncellenirken hata oluştu", extra={"error": str(e)})
             raise Exception(f"Bir hata oluştu: {str(e)}")
     
 #-------------------------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -625,24 +603,34 @@ class UserManageQuery(graphene.ObjectType):
     students = DjangoConnectionField(StudentNode)
     company = graphene.relay.Node.Field(CompanyNode)
     companies = DjangoConnectionField(CompanyNode)
-    me = graphene.Field(UserType)
+    me = graphene.Field(StudentNode)
     mycompany = graphene.Field(CompanyNode)
 
     def resolve_mycompany(self, info):
         user = info.context.user
         if not user.is_authenticated:
+            logger.error("Yetkilendirme hatası - Kullanıcı giriş yapmamış", extra={"user_id": user.id if user else None})
             raise Exception("Lütfen giriş yapınız.")
         try:
             company = Company.objects.get(user=user)
+            logger.info("Şirket bilgileri başarıyla getirildi", extra={"company_id": company.id})
             return company
         except Company.DoesNotExist:
+            logger.error("Şirket bulunamadı", extra={"user_id": user.id})
             raise Exception("Şirket bulunamadı.")
 
     def resolve_me(self, info):
         user = info.context.user
         if not user.is_authenticated:
+            logger.error("Yetkilendirme hatası - Kullanıcı giriş yapmamış", extra={"user_id": user.id if user else None})
             raise Exception("Lütfen giriş yapınız.")
-        return user
+        try:
+            student = Student.objects.get(user=user)
+            logger.info("Öğrenci bilgileri başarıyla getirildi", extra={"student_id": student.id})
+            return student
+        except Student.DoesNotExist:
+            logger.error("Öğrenci bulunamadı", extra={"user_id": user.id})
+            raise Exception("Öğrenci bulunamadı.")
                 
 #-------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 class UserManageMutation(graphene.ObjectType):

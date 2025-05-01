@@ -5,7 +5,14 @@ from graphene_django.filter import DjangoFilterConnectionField
 from userManage.utils.jwt_payload import custom_permission_required
 from userManage.models import Student, Company
 from .models import Internship, InternshipDiary, Evaulation
-from .utils import calculate_total_working_days
+from .utils.utils import calculate_total_working_days
+
+from .utils.mail_context import get_internship_application_mail_context, send_internship_mail
+
+from django.db import transaction
+from core.utils.logging import get_logger, log_error
+
+logger = get_logger(__name__)
 
 class InternshipNode(DjangoObjectType):
     class Meta:
@@ -64,38 +71,70 @@ class CreateInternshipApplication(graphene.Mutation):
         position = graphene.String(required=True)
         description = graphene.String(required=True)
 
-    internship = graphene.Field(InternshipNode)
     success = graphene.Boolean()
     message = graphene.String()
-    total_working_days = graphene.Int()
     
+    @classmethod
     @custom_permission_required('internshipManage.InternshipApplicationAdd')
-    def mutate(self, info,  company_id, start_date, end_date, position, description):
+    def mutate(cls, root, info,  **kwargs):
         try:
             status = InternshipStatusEnum()
             user = info.context.user
-            student = Student.objects.get(user=user)
-            company = Company.objects.get(id=company_id)
 
-            total_working_days = calculate_total_working_days(start_date, end_date)
+            total_working_days = calculate_total_working_days(kwargs.get('start_date'), kwargs.get('end_date'))
 
-            internship = Internship(
-                student=student,
-                company=company,
-                start_date=start_date,
-                end_date=end_date,
-                position=position,
-                description=description,
-                total_working_days=total_working_days,
-                status=status.PENDING.value
-            )
-            internship.save()
-            return CreateInternshipApplication(success=True, internship=internship, message="Staj basvuru kaydi basariyla olusturuldu.")
-        except Student.DoesNotExist:
-            return CreateInternshipApplication(success=False, message="Ogrenci bulunamadi.")
-        except Company.DoesNotExist:
-            return CreateInternshipApplication(success=False, message="Sirket bulunamadi.")
+            with transaction.atomic():
+                start_date = kwargs.get('start_date')
+                end_date = kwargs.get('end_date')
+                position = kwargs.get('position')
+                description = kwargs.get('description')
+                company_id = kwargs.get('company_id')
+
+                try:
+                    student = Student.objects.get(user=user)
+                    company = Company.objects.get(id=kwargs.get('company_id'))
+                    
+                except Student.DoesNotExist:
+                    logger.error("internshipManage", "Ogrenci bulunamadi", {"user_id": user.id, "username": user.username, "email": user.email})
+                    return cls(success=False, message="Ogrenci bulunamadi.")
+                
+                except Company.DoesNotExist:
+                    logger.error("Sirket bulunamadi", extra={"company_id":company_id})
+                    return cls(success=False, message="Şirket bulunamadı.")
+                
+                if Internship.objects.filter(
+                    student=student,
+                    company=company,
+                    start_date__lte=end_date,
+                    end_date__gte=start_date  
+                ).exists():
+                    logger.error("Bu şirket için belirtilen tarihlerde zaten bir başvurunuz mevcut.", extra={"student_id": student.id, "company_id": company.id, "start_date": start_date, "end_date": end_date})
+                    return CreateInternshipApplication(
+                        success=False,
+                        message="Bu şirket için belirtilen tarihlerde zaten bir başvurunuz mevcut."
+                    )
+                student_data = {
+                    "first_name": student.first_name,
+                    "last_name": student.last_name,
+                }
+                internship = Internship(
+                    student=student,
+                    company=company,
+                    start_date=start_date,
+                    end_date=end_date,
+                    position=position,
+                    description=description,
+                    total_working_days=total_working_days,
+                    status=status.PENDING.value
+                )
+                internship.save()
+                subject, context = get_internship_application_mail_context(student_data, 
+                company.user.email)
+                send_internship_mail(subject, context, company.user.email)
+                logger.info("Staj basvuru kaydi olusturuldu", {"internship_id": internship.id, "student_id": student.id, "company_id": company.id})
+                return CreateInternshipApplication(success=True, message="Staj basvuru kaydi basariyla olusturuldu.")
         except Exception as e:
+            logger.error("Staj basvuru kaydi olusturulurken hata meydana geldi", extra={"error": str(e)})
             return CreateInternshipApplication(success=False, message=str(e))
   
 class UpdateInternshipApplication(graphene.Mutation):
@@ -112,19 +151,25 @@ class UpdateInternshipApplication(graphene.Mutation):
         try:
             user = info.context.user
             internship = Internship.objects.get(id=internship_id)
+
             if internship.student.user != user:
+                logger.error("Staj bilgisi güncellenirken hata meydana geldi", extra={"internship_id": internship_id, "user_id": user.id})
                 return UpdateInternshipApplication(success=False, message="Bu staj sadece stajyeri tarafından güncellenebilir.")
 
-            for attr, value in kwargs.items():
-                if value is not None:
-                    setattr(internship, attr, value)
+            with transaction.atomic():
+                for attr, value in kwargs.items():
+                    if value is not None:
+                        setattr(internship, attr, value)
+                internship.save()
+                logger.info("Staj bilgisi güncellendi", extra={"internship_id": internship.id, "user_id": user.id})
 
-            internship.save()
             return UpdateInternshipApplication(success=True, message="Staj güncellendi.")
 
         except Internship.DoesNotExist:
+            logger.error("Ilgili staj bulunamadi", extra={"internship_id": internship_id, "user_id": user.id})
             return UpdateInternshipApplication(success=False, message="Staj bulunamadı.")
         except Exception as e:
+            logger.error("Staj bilgisi güncellenirken hata meydana geldi", extra={"error": str(e)})
             return UpdateInternshipApplication(success=False, message=str(e))
         
 class UpdateInternshipApplicationStatusByCompany(graphene.Mutation):
