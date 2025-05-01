@@ -27,14 +27,39 @@ services:
       - "8000:8000"
     volumes:
       - .:/app
+      - logs:/app/logs
+    working_dir: /app
+    environment:
+      - PYTHONPATH=/app
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
     restart: always
     depends_on:
       redis:
         condition: service_healthy
+    networks:
+      - app_network
+
+  cron:
+    build: .
+    container_name: django_cron
+    volumes:
+      - .:/app
+      - logs:/app/logs
+    working_dir: /app
     environment:
+      - PYTHONPATH=/app
       - REDIS_PASSWORD=${REDIS_PASSWORD}
       - REDIS_HOST=redis
       - REDIS_PORT=6379
+    command: >
+      bash -c "apt-get update && apt-get install -y cron && 
+      service cron start && 
+      python manage.py crontab add && 
+      tail -f /dev/null"
+    depends_on:
+      - web
     networks:
       - app_network
 
@@ -45,3 +70,5 @@ networks:
 volumes:
   redis_data:
     name: redis_data
+  logs:
+    name: app_logs
