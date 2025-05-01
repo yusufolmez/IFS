@@ -48,6 +48,7 @@ INSTALLED_APPS = [
     'graphene_django',
     'corsheaders',
     'storages',
+    'django_crontab',
 ]
 
 MIDDLEWARE = [
@@ -181,3 +182,32 @@ CACHES = {
 }
 # Cache timeout süresi (saniye cinsinden)
 CACHE_TTL = 60 
+
+LOGGING_CLEANUP = {
+    'user_management': {
+        'max_size_mb': 10,
+        'max_age_days': 30,
+        'schedule': '0 0 * * *'  # Her gün gece yarısı
+    },
+    'internship_management': {
+        'max_size_mb': 20,
+        'max_age_days': 60,
+        'schedule': '0 0 * * *'
+    },
+    'system_monitoring': {
+        'max_size_mb': 5,
+        'max_age_days': 7,
+        'schedule': '0 0 * * *'
+    }
+}
+
+LOG_MONITORING = {
+    'alert_threshold_mb': 100,  
+    'alert_threshold_days': 90,  
+    'check_interval': '0 */6 * * *'
+}
+
+CRONJOBS = [
+    ('0 0 * * *', 'core.tasks.cleanup_logs'),
+    ('0 */6 * * *', 'core.tasks.monitor_logs'),
+] 

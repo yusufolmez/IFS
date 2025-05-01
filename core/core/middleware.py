@@ -2,7 +2,9 @@ from django.contrib.auth.models import AnonymousUser
 from userManage.models import CustomUser
 import jwt
 from django.conf import settings
-from userManage.utils.logging import log_error, log_info
+from core.utils.logging import get_logger
+
+logger = get_logger('JWTAuthenticationMiddleware')
 
 class JWTAuthenticationMiddleware:
     def __init__(self):
@@ -37,29 +39,29 @@ class JWTAuthenticationMiddleware:
             try:
                 user = CustomUser.objects.get(id=user_id)
                 request.user = user
-                log_info("JWT Authentication başarılı", {
+                logger.info("JWT Authentication başarılı", {
                     "user_id": user.id,
                     "role": user.role.name
                 })
             except CustomUser.DoesNotExist:
                 request.user = AnonymousUser()
-                log_error("JWT Authentication - Kullanıcı bulunamadı", {
+                logger.error("JWT Authentication - Kullanıcı bulunamadı", {
                     "user_id": user_id
                 })
 
         except jwt.ExpiredSignatureError:
             request.user = AnonymousUser()
-            log_error("JWT Authentication - Token süresi dolmuş", {
+            logger.error("JWT Authentication - Token süresi dolmuş", {
                 "token": token[:10] if 'token' in locals() else None
             })
         except jwt.InvalidTokenError:
             request.user = AnonymousUser()
-            log_error("JWT Authentication - Geçersiz token", {
+            logger.error("JWT Authentication - Geçersiz token", {
                 "token": token[:10] if 'token' in locals() else None
             })
         except Exception as e:
             request.user = AnonymousUser()
-            log_error("JWT Authentication - Beklenmeyen hata", {
+            logger.error("JWT Authentication - Beklenmeyen hata", {
                 "error": str(e)
             })
 
