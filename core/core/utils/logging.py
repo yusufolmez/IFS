@@ -6,24 +6,24 @@ import os
 
 def get_logger(name):
     logger = logging.getLogger(name)
+    
+    if logger.handlers:
+        return logger
+        
     logger.setLevel(logging.INFO)
 
-    # Log dosyasının yolu
     log_dir = os.path.join(settings.BASE_DIR, 'logs')
     if not os.path.exists(log_dir):
         os.makedirs(log_dir)
     
     log_file = os.path.join(log_dir, f'{name}.log')
     
-    # File handler
     file_handler = logging.FileHandler(log_file)
     file_handler.setLevel(logging.INFO)
     
-    # Formatter
     formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
     file_handler.setFormatter(formatter)
     
-    # Handler'ı logger'a ekle
     logger.addHandler(file_handler)
     
     return logger

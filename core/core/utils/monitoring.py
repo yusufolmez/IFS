@@ -7,8 +7,8 @@ class LogMonitor:
     def __init__(self):
         self.logs_dir = os.path.join(settings.BASE_DIR, 'logs')
         self.backup_dir = os.path.join(self.logs_dir, 'backups')
-        self.alert_threshold_mb = 100  # Toplam log boyutu için uyarı eşiği
-        self.alert_threshold_days = 90  # En eski log için uyarı eşiği
+        self.alert_threshold_mb = 100  
+        self.alert_threshold_days = 90  
 
     def check_log_sizes(self):
         """Tüm log dosyalarının boyutlarını kontrol eder"""
@@ -17,7 +17,7 @@ class LogMonitor:
             for filename in os.listdir(self.logs_dir):
                 if filename.endswith('.log'):
                     file_path = os.path.join(self.logs_dir, filename)
-                    file_size = os.path.getsize(file_path) / (1024 * 1024)  # MB cinsinden
+                    file_size = os.path.getsize(file_path) / (1024 * 1024)  
                     total_size += file_size
                     
                     if file_size > self.alert_threshold_mb:

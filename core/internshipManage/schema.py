@@ -4,15 +4,13 @@ from graphene_django.filter import DjangoFilterConnectionField
 
 from userManage.utils.jwt_payload import custom_permission_required
 from userManage.models import Student, Company
-from .models import Internship, InternshipDiary, Evaulation
+from .models import Internship, InternshipDiary, Evaluation
 from .utils.utils import calculate_total_working_days
 
-from .utils.mail_context import get_internship_application_mail_context, send_internship_mail
+from .utils.mail_context import get_internship_application_mail_context,get_internship_application_mail_context_for_student,get_internship_application_mail_context_for_student_accepted,get_internship_application_mail_context_for_student_rejected , send_internship_mail
 
 from django.db import transaction
-from core.utils.logging import get_logger, log_error
-
-logger = get_logger(__name__)
+from core.utils.logging import log_error, log_info, log_warning
 
 class InternshipNode(DjangoObjectType):
     class Meta:
@@ -37,9 +35,9 @@ class InternshipDiaryNode(DjangoObjectType):
         }
         interfaces = (graphene.relay.Node,)
 
-class EvaulationNode(DjangoObjectType):
+class EvaluationNode(DjangoObjectType):
     class Meta:
-        model = Evaulation
+        model = Evaluation
         filter_fields = {
             'id': ['exact'],
             'internship': ['exact'],
@@ -95,12 +93,27 @@ class CreateInternshipApplication(graphene.Mutation):
                     company = Company.objects.get(id=kwargs.get('company_id'))
                     
                 except Student.DoesNotExist:
-                    logger.error("internshipManage", "Ogrenci bulunamadi", {"user_id": user.id, "username": user.username, "email": user.email})
+                    log_error(
+                        module_name="internship_management",
+                        message=f"Ogrenci bulunamadi - Kullanici: {user.username}",
+                        context={
+                            "user_id": user.id,
+                            "username": user.username,
+                            "email": user.email
+                        }
+                    )
                     return cls(success=False, message="Ogrenci bulunamadi.")
                 
                 except Company.DoesNotExist:
-                    logger.error("Sirket bulunamadi", extra={"company_id":company_id})
-                    return cls(success=False, message="Şirket bulunamadı.")
+                    log_error(
+                        module_name="internship_management",
+                        message=f"Sirket bulunamadi - Sirket ID: {company_id}",
+                        context={
+                            "company_id": company_id,
+                            "user_id": user.id
+                        }
+                    )
+                    return cls(success=False, message="Sirket bulunamadi.")
                 
                 if Internship.objects.filter(
                     student=student,
@@ -108,15 +121,23 @@ class CreateInternshipApplication(graphene.Mutation):
                     start_date__lte=end_date,
                     end_date__gte=start_date  
                 ).exists():
-                    logger.error("Bu şirket için belirtilen tarihlerde zaten bir başvurunuz mevcut.", extra={"student_id": student.id, "company_id": company.id, "start_date": start_date, "end_date": end_date})
-                    return CreateInternshipApplication(
-                        success=False,
-                        message="Bu şirket için belirtilen tarihlerde zaten bir başvurunuz mevcut."
+                    log_error(
+                        module_name="internship_management",
+                        message=f"Cakisan staj basvurusu - Ogrenci: {student.username}, Sirket: {company.name}",
+                        context={
+                            "student_id": student.id,
+                            "company_id": company.id,
+                            "start_date": start_date,
+                            "end_date": end_date
+                        }
                     )
+                    return CreateInternshipApplication(success=False, message="Bu sirket icin belirtilen tarihlerde zaten bir basvurunuz mevcut.")
+
                 student_data = {
                     "first_name": student.first_name,
                     "last_name": student.last_name,
                 }
+
                 internship = Internship(
                     student=student,
                     company=company,
@@ -128,13 +149,56 @@ class CreateInternshipApplication(graphene.Mutation):
                     status=status.PENDING.value
                 )
                 internship.save()
-                subject, context = get_internship_application_mail_context(student_data, 
-                company.user.email)
-                send_internship_mail(subject, context, company.user.email)
-                logger.info("Staj basvuru kaydi olusturuldu", {"internship_id": internship.id, "student_id": student.id, "company_id": company.id})
+
+                log_info(
+                    module_name="internship_management",
+                    message=f"Yeni staj basvurusu olusturuldu - Ogrenci: {student.username}, Sirket: {company.name}",
+                    context={
+                        "internship_id": internship.id,
+                        "student_id": student.id,
+                        "company_id": company.id,
+                        "start_date": start_date,
+                        "end_date": end_date,
+                        "position": position
+                    }
+                )
+
+                subject, context = get_internship_application_mail_context(student_data, company.user.email)
+                subject_for_student, context_for_student = get_internship_application_mail_context_for_student(student_data, student.user.email)
+                
+                try:
+                    send_internship_mail(subject_for_student, context_for_student, student.user.email)
+                    send_internship_mail(subject, context, company.user.email)
+                    log_info(
+                        module_name="internship_management",
+                        message=f"Staj basvuru e-postalari gonderildi - Ogrenci: {student.username}, Sirket: {company.name}",
+                        context={
+                            "internship_id": internship.id,
+                            "student_email": student.user.email,
+                            "company_email": company.user.email
+                        }
+                    )
+                except Exception as mail_error:
+                    log_error(
+                        module_name="internship_management",
+                        message=f"E-posta gonderiminde hata - Ogrenci: {student.username}, Sirket: {company.name}",
+                        context={
+                            "internship_id": internship.id,
+                            "error": str(mail_error)
+                        }
+                    )
+
                 return CreateInternshipApplication(success=True, message="Staj basvuru kaydi basariyla olusturuldu.")
         except Exception as e:
-            logger.error("Staj basvuru kaydi olusturulurken hata meydana geldi", extra={"error": str(e)})
+            log_error(
+                module_name="internship_management",
+                message=f"Staj basvurusu olusturulurken hata: {str(e)}",
+                context={
+                    "user_id": user.id,
+                    "company_id": company_id,
+                    "error": str(e)
+                }
+            )
             return CreateInternshipApplication(success=False, message=str(e))
   
 class UpdateInternshipApplication(graphene.Mutation):
@@ -147,29 +211,74 @@ class UpdateInternshipApplication(graphene.Mutation):
     message = graphene.String()
 
     @classmethod
+    @custom_permission_required('internshipManage.InternshipApplicationUpdate')
     def mutate(cls, root, info, internship_id, **kwargs):
         try:
             user = info.context.user
             internship = Internship.objects.get(id=internship_id)
 
             if internship.student.user != user:
-                logger.error("Staj bilgisi güncellenirken hata meydana geldi", extra={"internship_id": internship_id, "user_id": user.id})
+                log_error(
+                    module_name="internship_management",
+                    message=f"Yetkisiz staj güncelleme denemesi - Kullanıcı: {user.username}, Staj ID: {internship_id}",
+                    context={
+                        "user_id": user.id,
+                        "internship_id": internship_id,
+                        "student_id": internship.student.id
+                    }
+                )
                 return UpdateInternshipApplication(success=False, message="Bu staj sadece stajyeri tarafından güncellenebilir.")
+
+            if internship.status != InternshipStatusEnum.PENDING.value:
+                log_error(
+                    module_name="internship_management",
+                    message=f"Geçersiz staj durumu güncelleme denemesi - Staj ID: {internship_id}, Mevcut Durum: {internship.status}",
+                    context={
+                        "internship_id": internship_id,
+                        "current_status": internship.status,
+                        "user_id": user.id
+                    }
+                )
+                return UpdateInternshipApplication(success=False, message="Staj durumu 'pending' olmalı.")
 
             with transaction.atomic():
                 for attr, value in kwargs.items():
                     if value is not None:
                         setattr(internship, attr, value)
                 internship.save()
-                logger.info("Staj bilgisi güncellendi", extra={"internship_id": internship.id, "user_id": user.id})
+
+                log_info(
+                    module_name="internship_management",
+                    message=f"Staj başvurusu güncellendi - Staj ID: {internship_id}, Kullanıcı: {user.username}",
+                    context={
+                        "internship_id": internship_id,
+                        "user_id": user.id,
+                        "updated_fields": list(kwargs.keys())
+                    }
+                )
 
             return UpdateInternshipApplication(success=True, message="Staj güncellendi.")
 
         except Internship.DoesNotExist:
-            logger.error("Ilgili staj bulunamadi", extra={"internship_id": internship_id, "user_id": user.id})
+            log_error(
+                module_name="internship_management",
+                message=f"Staj bulunamadı - Staj ID: {internship_id}",
+                context={
+                    "internship_id": internship_id,
+                    "user_id": user.id
+                }
+            )
             return UpdateInternshipApplication(success=False, message="Staj bulunamadı.")
         except Exception as e:
-            logger.error("Staj bilgisi güncellenirken hata meydana geldi", extra={"error": str(e)})
+            log_error(
+                module_name="internship_management",
+                message=f"Staj güncellenirken hata: {str(e)}",
+                context={
+                    "internship_id": internship_id,
+                    "user_id": user.id,
+                    "error": str(e)
+                }
+            )
             return UpdateInternshipApplication(success=False, message=str(e))
         
 class UpdateInternshipApplicationStatusByCompany(graphene.Mutation):
@@ -187,21 +296,119 @@ class UpdateInternshipApplicationStatusByCompany(graphene.Mutation):
             internship = Internship.objects.get(id=internship_id)
 
             if internship.company.user != user:
-                return UpdateInternshipApplicationStatusByCompany(success=False, message="Bu staj sadece sirketi tarafından güncellenebilir.")
+                log_error(
+                    module_name="internship_management",
+                    message=f"Yetkisiz sirket onayi denemesi - Kullanici: {user.username}, Staj ID: {internship_id}",
+                    context={
+                        "user_id": user.id,
+                        "internship_id": internship_id,
+                        "company_id": internship.company.id
+                    }
+                )
+                return UpdateInternshipApplicationStatusByCompany(success=False, message="Bu staj sadece sirketi tarafindan guncellenebilir.")
 
             if status not in [InternshipStatusEnum.APPROVED_BY_COMPANY.value, InternshipStatusEnum.REJECTED.value]:
+                log_error(
+                    module_name="internship_management",
+                    message=f"Gecersiz sirket onay durumu - Staj ID: {internship_id}, Durum: {status}",
+                    context={
+                        "internship_id": internship_id,
+                        "status": status,
+                        "user_id": user.id
+                    }
+                )
                 return UpdateInternshipApplicationStatusByCompany(success=False, message="Gecersiz durum. 'approved_by_company' veya 'rejected' olmalidir.")
             
             if internship.status == status:
+                log_warning(
+                    module_name="internship_management",
+                    message=f"Staj zaten ayni durumda - Staj ID: {internship_id}, Durum: {status}",
+                    context={
+                        "internship_id": internship_id,
+                        "status": status,
+                        "user_id": user.id
+                    }
+                )
                 return UpdateInternshipApplicationStatusByCompany(success=False, message="Staj zaten bu durumda.")
 
+            old_status = internship.status
             internship.status = status.value
             internship.save()
+
+            log_info(
+                module_name="internship_management",
+                message=f"Sirket staj durumu guncellendi - Staj ID: {internship_id}, Eski Durum: {old_status}, Yeni Durum: {status}",
+                context={
+                    "internship_id": internship_id,
+                    "old_status": old_status,
+                    "new_status": status,
+                    "company_id": internship.company.id,
+                    "student_id": internship.student.id
+                }
+            )
+
+            student_data = {
+                "first_name": internship.student.first_name,
+                "last_name": internship.student.last_name,
+            }
+
+            try:
+                if status == InternshipStatusEnum.APPROVED_BY_COMPANY.value:
+                    subject, context = get_internship_application_mail_context_for_student_accepted(student_data, internship.student.user.email)
+                    send_internship_mail(subject, context, internship.student.user.email)
+                    log_info(
+                        module_name="internship_management",
+                        message=f"Staj onay e-postasi gonderildi - Ogrenci: {internship.student.username}, Staj ID: {internship_id}",
+                        context={
+                            "internship_id": internship_id,
+                            "student_id": internship.student.id,
+                            "email": internship.student.user.email
+                        }
+                    )
+                elif status == InternshipStatusEnum.REJECTED.value:
+                    subject, context = get_internship_application_mail_context_for_student_rejected(student_data, internship.student.user.email)
+                    send_internship_mail(subject, context, internship.student.user.email)
+                    log_info(
+                        module_name="internship_management",
+                        message=f"Staj red e-postasi gonderildi - Ogrenci: {internship.student.username}, Staj ID: {internship_id}",
+                        context={
+                            "internship_id": internship_id,
+                            "student_id": internship.student.id,
+                            "email": internship.student.user.email
+                        }
+                    )
+            except Exception as mail_error:
+                log_error(
+                    module_name="internship_management",
+                    message=f"E-posta gonderiminde hata - Ogrenci: {internship.student.username}, Staj ID: {internship_id}",
+                    context={
+                        "internship_id": internship_id,
+                        "error": str(mail_error)
+                    }
+                )
+
             return UpdateInternshipApplicationStatusByCompany(success=True, message="Staj durumu basariyla guncellendi.")
 
         except Internship.DoesNotExist:
-            return UpdateInternshipApplicationStatusByCompany(success=False, message="Staj bulunamadı.")
+            log_error(
+                module_name="internship_management",
+                message=f"Sirket onayi icin staj bulunamadi - Staj ID: {internship_id}",
+                context={
+                    "internship_id": internship_id,
+                    "user_id": user.id
+                }
+            )
+            return UpdateInternshipApplicationStatusByCompany(success=False, message="Staj bulunamadi.")
         except Exception as e:
+            log_error(
+                module_name="internship_management",
+                message=f"Sirket onayi guncellenirken hata: {str(e)}",
+                context={
+                    "internship_id": internship_id,
+                    "user_id": user.id,
+                    "error": str(e)
+                }
+            )
             return UpdateInternshipApplicationStatusByCompany(success=False, message=str(e))
 
 class UpdateInternshipApplicationStatusByAdmin(graphene.Mutation):
@@ -211,25 +418,63 @@ class UpdateInternshipApplicationStatusByAdmin(graphene.Mutation):
 
     success = graphene.Boolean()
     message = graphene.String()
-
+    @transaction.atomic()
     @custom_permission_required('internshipManage.InternshipApplicationApproveByAdminorRejected')
     def mutate(self, info, internship_id, status):
         try:
             internship = Internship.objects.get(id=internship_id)
 
             if status not in [InternshipStatusEnum.APPROVED_BY_ADMIN.value, InternshipStatusEnum.REJECTED.value]:
+                log_error(
+                    module_name="internship_management",
+                    message=f"Gecersiz durum - Staj ID: {internship_id}, Durum: {status}",
+                    context={
+                        "internship_id": internship_id,
+                        "status": status
+                    }
+                )
                 return UpdateInternshipApplicationStatusByAdmin(success=False, message="Gecersiz durum. 'approved_by_admin' veya 'rejected' olmalidir.")
             
             if internship.status == status:
+                log_error(
+                    module_name="internship_management",
+                    message=f"Staj zaten ayni durumda - Staj ID: {internship_id}, Durum: {status}",
+                    context={
+                        "internship_id": internship_id,
+                        "status": status
+                    }
+                )
                 return UpdateInternshipApplicationStatusByAdmin(success=False, message="Staj zaten bu durumda.")
 
             internship.status = status.value
             internship.save()
+            log_info(
+                module_name="internship_management",
+                message=f"Staj durumu guncellendi - Staj ID: {internship_id} Yeni Durum: {status}",
+                context={
+                    "internship_id": internship_id,
+                    "status": status
+                    }
+                )
             return UpdateInternshipApplicationStatusByAdmin(success=True, message="Staj durumu basariyla guncellendi.")
 
         except Internship.DoesNotExist:
+            log_error(
+                module_name="internship_management",
+                message=f"Staj bulunamadı - Staj ID: {internship_id}",
+                context={
+                    "internship_id": internship_id
+                }
+            )
             return UpdateInternshipApplicationStatusByAdmin(success=False, message="Staj bulunamadı.")
         except Exception as e:
+            log_error(
+                module_name="internship_management",
+                message=f"Staj durumu guncellenirken hata: {str(e)}",
+                context={
+                    "internship_id": internship_id
+                    }
+            )
             return UpdateInternshipApplicationStatusByAdmin(success=False, message=str(e))
 
 class DeleteInternshipApplication(graphene.Mutation):
@@ -240,23 +485,68 @@ class DeleteInternshipApplication(graphene.Mutation):
     message = graphene.String()
 
     @classmethod
+    @custom_permission_required('internshipManage.InternshipApplicationDelete')
     def mutate(cls, root, info, internship_id):
         try:
             user = info.context.user
             internship = Internship.objects.get(id=internship_id)
 
             if internship.student.user != user:
+                log_error(
+                    module_name="internship_management",
+                    message=f"Yetkisiz staj silme denemesi - Kullanıcı: {user.username}, Staj ID: {internship_id}",
+                    context={
+                        "user_id": user.id,
+                        "internship_id": internship_id,
+                        "student_id": internship.student.id
+                    }
+                )
                 return DeleteInternshipApplication(success=False, message="Bu staj sadece stajyer tarafından silinebilir.")
 
             if internship.status != InternshipStatusEnum.PENDING.value:
+                log_error(
+                    module_name="internship_management",
+                    message=f"Geçersiz staj silme denemesi - Staj ID: {internship_id}, Durum: {internship.status}",
+                    context={
+                        "internship_id": internship_id,
+                        "current_status": internship.status,
+                        "user_id": user.id
+                    }
+                )
                 return DeleteInternshipApplication(success=False, message="Sadece 'pending' durumundaki stajlar silinebilir.")
 
             internship.delete()
+            log_info(
+                module_name="internship_management",
+                message=f"Staj başvurusu silindi - Staj ID: {internship_id}, Kullanıcı: {user.username}",
+                context={
+                    "internship_id": internship_id,
+                    "user_id": user.id,
+                    "student_id": internship.student.id
+                }
+            )
             return DeleteInternshipApplication(success=True, message="Staj başarıyla silindi.")
 
         except Internship.DoesNotExist:
+            log_error(
+                module_name="internship_management",
+                message=f"Silinecek staj bulunamadı - Staj ID: {internship_id}",
+                context={
+                    "internship_id": internship_id,
+                    "user_id": user.id
+                }
+            )
             return DeleteInternshipApplication(success=False, message="Staj bulunamadı.")
         except Exception as e:
+            log_error(
+                module_name="internship_management",
+                message=f"Staj silinirken hata: {str(e)}",
+                context={
+                    "internship_id": internship_id,
+                    "user_id": user.id,
+                    "error": str(e)
+                }
+            )
             return DeleteInternshipApplication(success=False, message=str(e))
 
 class CreateInternshipDiary(graphene.Mutation):
@@ -278,28 +568,108 @@ class CreateInternshipDiary(graphene.Mutation):
         try:
             internship_id = kwargs.get("internship_id")
             internship = Internship.objects.get(id=internship_id)
+            date = kwargs.get("date")
 
-            if InternshipDiary.objects.filter(internship=internship, date=kwargs.get("date")).exists():
-                return CreateInternshipDiary(success=False, message=f"{kwargs.get('date')} tarihli bir günlük zaten mevcut.")
+            if date < internship.start_date or date > internship.end_date:
+                log_error(
+                    module_name="internship_management",
+                    message=f"Geçersiz günlük tarihi - Staj ID: {internship_id}, Tarih: {date}",
+                    context={
+                        "internship_id": internship_id,
+                        "date": date,
+                        "start_date": internship.start_date,
+                        "end_date": internship.end_date
+                    }
+                )
+                return CreateInternshipDiary(success=False, message="Günlük tarihi staj dönemi içinde olmalıdır.")
+
+            if date.weekday() >= 5: 
+                log_error(
+                    module_name="internship_management",
+                    message=f"Hafta sonu günlük girişi - Staj ID: {internship_id}, Tarih: {date}",
+                    context={
+                        "internship_id": internship_id,
+                        "date": date,
+                        "weekday": date.weekday()
+                    }
+                )
+                return CreateInternshipDiary(success=False, message="Hafta sonu günlük girişi yapamazsınız.")
+
+            if InternshipDiary.objects.filter(internship=internship, date=date).exists():
+                log_error(
+                    module_name="internship_management",
+                    message=f"Aynı tarihli günlük zaten mevcut - Staj ID: {internship_id}, Tarih: {date}",
+                    context={
+                        "internship_id": internship_id,
+                        "date": date,
+                        "student_id": internship.student.id
+                    }
+                )
+                return CreateInternshipDiary(success=False, message=f"{date} tarihli bir günlük zaten mevcut.")
             
             if InternshipDiary.objects.filter(internship=internship, day_number=kwargs.get("day_number")).exists():
+                log_error(
+                    module_name="internship_management",
+                    message=f"Aynı gün numaralı günlük zaten mevcut - Staj ID: {internship_id}, Gün: {kwargs.get('day_number')}",
+                    context={
+                        "internship_id": internship_id,
+                        "day_number": kwargs.get("day_number"),
+                        "student_id": internship.student.id
+                    }
+                )
                 return CreateInternshipDiary(success=False, message=f"{kwargs.get('day_number')} numaralı bir günlük zaten mevcut.")
                 
             if kwargs.get("hours_worked") < 0 or kwargs.get("hours_worked") > 24:
+                log_error(
+                    module_name="internship_management",
+                    message=f"Geçersiz çalışma saati - Staj ID: {internship_id}, Saat: {kwargs.get('hours_worked')}",
+                    context={
+                        "internship_id": internship_id,
+                        "hours_worked": kwargs.get("hours_worked"),
+                        "student_id": internship.student.id
+                    }
+                )
                 return CreateInternshipDiary(success=False, message="Çalışma saati 0 ile 24 saat arasında olmalı.")
             
             diary = InternshipDiary(internship=internship, status=kwargs['status'].value)
 
             allowed_fields = ['date', 'hours_worked', 'day_number', 'text', 'tasks', 'feedback']
-            for field  in allowed_fields:
+            for field in allowed_fields:
                 if field in kwargs and kwargs[field] is not None:
                     setattr(diary, field, kwargs[field])
 
             diary.save()
-            return CreateInternshipDiary(success=True, message="Staj gunlugu kaydi basariyla olusturuldu.")
+
+            log_info(
+                module_name="internship_management",
+                message=f"Yeni staj günlüğü oluşturuldu - Staj ID: {internship_id}, Gün: {kwargs.get('day_number')}",
+                context={
+                    "internship_id": internship_id,
+                    "diary_id": diary.id,
+                    "day_number": kwargs.get("day_number"),
+                    "date": date,
+                    "student_id": internship.student.id
+                }
+            )
+            return CreateInternshipDiary(success=True, message="Staj günlüğü kaydı başarıyla oluşturuldu.")
         except Internship.DoesNotExist:
-            return CreateInternshipDiary(success=False, message="Staj bulunamadi.")
+            log_error(
+                module_name="internship_management",
+                message=f"Günlük oluşturulacak staj bulunamadı - Staj ID: {internship_id}",
+                context={
+                    "internship_id": internship_id
+                }
+            )
+            return CreateInternshipDiary(success=False, message="Staj bulunamadı.")
         except Exception as e:
+            log_error(
+                module_name="internship_management",
+                message=f"Günlük oluşturulurken hata: {str(e)}",
+                context={
+                    "internship_id": internship_id,
+                    "error": str(e)
+                }
+            )
             return CreateInternshipDiary(success=False, message=str(e))
         
 class UpdateInternshipDiary(graphene.Mutation):
@@ -322,18 +692,68 @@ class UpdateInternshipDiary(graphene.Mutation):
             diary = InternshipDiary.objects.get(id=internship_diary_id)
 
             if diary.internship.student.user != user:
+                log_error(
+                    module_name="internship_management",
+                    message=f"Yetkisiz gunluk guncelleme denemesi - Kullanici: {user.username}, Gunluk ID: {internship_diary_id}",
+                    context={
+                        "user_id": user.id,
+                        "internship_diary_id": internship_diary_id
+                    }
+                )
                 return UpdateInternshipDiary(success=False, message="Bu günlük sadece stajyeri tarafından güncellenebilir.")
 
             hours_worked = kwargs.get("hours_worked")
             day_number = kwargs.get("day_number")
+            date = kwargs.get("date")
+
+            if date < diary.internship.start_date or date > diary.internship.end_date:
+                log_error(
+                    module_name="internship_management",
+                    message=f"Geçersiz tarih - Staj ID: {diary.internship.id}, Tarih: {date}",
+                    context={
+                        "internship_id": diary.internship.id,
+                        "date": date,
+                        "start_date": diary.internship.start_date,
+                        "end_date": diary.internship.end_date
+                    }
+                )
+                return UpdateInternshipDiary(success=False, message="Günlük tarihi staj dönemi içinde olmalıdır.")
+            
+            if InternshipDiary.objects.filter(internship=diary.internship, date=date).exclude(id=diary.id).exists():
+                log_error(
+                    module_name="internship_management",
+                    message=f"Aynı tarihli günlük zaten mevcut - Staj ID: {diary.internship.id}, Tarih: {date}",
+                    context={
+                        "internship_id": diary.internship.id,
+                        "date": date,
+                        "student_id": diary.internship.student.id
+                    }
+                )
+                return UpdateInternshipDiary(success=False, message=f"{date} tarihli bir günlük zaten mevcut.")
             
             if hours_worked is not None:
                 if hours_worked < 0 or hours_worked > 24:
+                    log_error(
+                        module_name="internship_management",
+                        message=f"Geçersiz çalışma saati - Staj ID: {diary.internship.id}, Saat: {hours_worked}",
+                        context={
+                            "internship_id": diary.internship.id,
+                            "hours_worked": hours_worked
+                        }
+                    )
                     return UpdateInternshipDiary(success=False, message="Çalışma saati 0 ile 24 arasında olmalıdır.")
                 
             if day_number is not None:
                 is_duplicate = InternshipDiary.objects.filter(day_number=day_number, internship=diary.internship).exclude(id=diary.id).exists()
                 if is_duplicate:
+                    log_error(
+                        module_name="internship_management",
+                        message=f"Aynı gün numaralı günlük zaten mevcut - Staj ID: {diary.internship.id}, Gün: {day_number}",
+                        context={
+                            "internship_id": diary.internship.id,
+                            "day_number": day_number
+                        }
+                    )
                     return UpdateInternshipDiary(success=False, message=f"{day_number} numaralı bir günlük zaten mevcut.")
 
             for attr, value in kwargs.items():
@@ -341,10 +761,32 @@ class UpdateInternshipDiary(graphene.Mutation):
                     setattr(diary, attr, value)
 
             diary.save()
+            log_info(
+                module_name="internship_management",
+                message=f"Staj gunlugu kaydi basariyla guncellendi - Staj ID: {diary.internship.id}, Gün: {day_number}",
+                context={
+                    "internship_id": diary.internship.id,
+                }
+            )
             return UpdateInternshipDiary(success=True, message="Staj gunlugu kaydi basariyla guncellendi.")
         except InternshipDiary.DoesNotExist:
+            log_error(
+                module_name="internship_management",
+                message=f"Staj gunlugu bulunamadi - Staj ID: {diary.internship.id}",
+                context={
+                    "internship_id": diary.internship.id
+                }
+            )
             return UpdateInternshipDiary(success=False, message="Staj gunlugu bulunamadi.")
         except Exception as e:
+            log_error(
+                module_name="internship_management",
+                message=f"Staj gunlugu guncellenirken hata: {str(e)}",
+                context={
+                    "internship_id": diary.internship.id,
+                    "error": str(e)
+                }
+            )
             return UpdateInternshipDiary(success=False, message=str(e))
 
 class InternshipDiaryStatusUpdate(graphene.Mutation):
@@ -354,7 +796,6 @@ class InternshipDiaryStatusUpdate(graphene.Mutation):
 
     success = graphene.Boolean()
     message = graphene.String()
-    internship_diary = graphene.Field(InternshipDiaryNode)
 
     @custom_permission_required('internshipManage.InternshipDiaryUpdate')
     def mutate(self, info, internship_diary_id, status):
@@ -363,26 +804,140 @@ class InternshipDiaryStatusUpdate(graphene.Mutation):
             diary = InternshipDiary.objects.get(id=internship_diary_id)
             
             if diary.internship.student.user != user:
+                log_error(
+                    module_name="internship_management",
+                    message=f"Yetkisiz gunluk durumu guncelleme denemesi - Kullanici: {user.username}, Gunluk ID: {internship_diary_id}",
+                    context={
+                        "user_id": user.id,
+                        "internship_diary_id": internship_diary_id
+                    }
+                )
                 return InternshipDiaryStatusUpdate(success=False, message="Bu günlük sadece stajyeri tarafından güncellenebilir.")
             
-            if status not in [DiaryStatusEnum.DRAFT.value, DiaryStatusEnum.SUBMITTED.value]:
+            if status.value not in {DiaryStatusEnum.DRAFT.value, DiaryStatusEnum.SUBMITTED.value}:
+                log_error(
+                    module_name="internship_management",
+                    message=f"Gecersiz durum - Staj ID: {diary.internship.id}, Durum: {status}",
+                    context={
+                        "internship_id": diary.internship.id,
+                        "status": status
+                    }
+                )
                 return InternshipDiaryStatusUpdate(success=False, message="Gecersiz durum. 'draft' veya 'submitted' olmalidir.")
             
             if diary.status == status.value:
+                log_error(
+                    module_name="internship_management",
+                    message=f"Staj gunlugu zaten bu durumda - Staj ID: {diary.internship.id}, Durum: {status}",
+                    context={
+                        "internship_id": diary.internship.id,
+                        "status": status
+                    }
+                )
                 return InternshipDiaryStatusUpdate(success=False, message="Staj gunlugu zaten bu durumda.")
             
             diary.status = status.value
             diary.save()
-            return InternshipDiaryStatusUpdate(success=True, internship_diary=diary, message="Staj gunlugu durumu basariyla guncellendi.")
+            log_info(
+                module_name="internship_management",
+                message=f"Staj gunlugu durumu guncellendi - Staj ID: {diary.internship.id}, Durum: {status}",
+                context={
+                    "internship_id": diary.internship.id,
+                    "status": status
+                }
+            )
+            return InternshipDiaryStatusUpdate(success=True, message="Staj gunlugu durumu basariyla guncellendi.")
         except InternshipDiary.DoesNotExist:
+            log_error(
+                module_name="internship_management",
+                message=f"Staj gunlugu bulunamadi - Staj ID: {diary.internship.id}",
+                context={
+                    "internship_id": diary.internship.id
+                }
+            )
             return InternshipDiaryStatusUpdate(success=False, message="Staj gunlugu bulunamadi.")
         except Exception as e:
+            log_error(
+                module_name="internship_management",
+                message=f"Staj gunlugu durumu guncellenirken hata: {str(e)}",
+                context={
+                    "internship_id": diary.internship.id,
+                    "error": str(e)
+                }
+            )
             return InternshipDiaryStatusUpdate(success=False, message=str(e))
 
-class CreateEvaulation(graphene.Mutation):
+class DeleteInternshipDiary(graphene.Mutation):
+    class Arguments:
+        diary_id = graphene.ID(required=True)
+
+    success = graphene.Boolean()
+    message = graphene.String()
+
+    @custom_permission_required('internshipManage.InternshipDiaryDelete')
+    def mutate(self, info, diary_id):
+        try:
+            user = info.context.user
+            diary = InternshipDiary.objects.get(id=diary_id)
+            if diary.internship.student.user != user:
+                log_error(
+                    module_name="internship_management",
+                    message=f"Yetkisiz gunluk silme denemesi - Kullanici: {user.username}, Gunluk ID: {diary_id}",
+                    context={
+                        "diary_id": diary_id,
+                        "user_id": user.id,
+                        "student_id": diary.internship.student.id
+                    }
+                )
+                return DeleteInternshipDiary(success=False, message="Bu günlük sadece stajyeri tarafından silinebilir.")
+            if diary.status == DiaryStatusEnum.SUBMITTED.value:
+                log_error(
+                    module_name="internship_management",
+                    message=f"Gonderilmis gunluk silme denemesi - Gunluk ID: {diary_id}, Kullanici: {user.username}",
+                    context={
+                        "diary_id": diary_id,
+                        "user_id": user.id,
+                        "status": diary.status
+                    }
+                )
+                return DeleteInternshipDiary(success=False, message="Gönderilmiş günlükler silinemez.")
+            diary.delete()
+            log_info(
+                module_name="internship_management",
+                message=f"Staj gunlugu silindi - Gunluk ID: {diary_id}, Kullanici: {user.username}",
+                context={
+                    "diary_id": diary_id,
+                    "user_id": user.id,
+                    "student_id": diary.internship.student.id
+                }
+            )
+            return DeleteInternshipDiary(success=True, message="Staj gunlugu basariyla silindi.")
+        except InternshipDiary.DoesNotExist:
+            log_error(
+                module_name="internship_management",
+                message=f"Silinecek gunluk bulunamadi - Gunluk ID: {diary_id}",
+                context={
+                    "diary_id": diary_id,
+                    "user_id": user.id
+                }
+            )
+            return DeleteInternshipDiary(success=False, message="Staj gunlugu bulunamadi.")
+        except Exception as e:
+            log_error(
+                module_name="internship_management",
+                message=f"Gunluk silinirken hata: {str(e)}",
+                context={
+                    "diary_id": diary_id,
+                    "user_id": user.id,
+                    "error": str(e)
+                }
+            )
+            return DeleteInternshipDiary(success=False, message=str(e))
+
+class CreateEvaluation(graphene.Mutation):
     class Arguments:
         internship_id = graphene.ID(required=True)
-        attedence = graphene.Int(required=True)
+        attendance = graphene.Int(required=True)
         performance = graphene.Int(required=True)
         adaptation = graphene.Int(required=True)
         technical_skills = graphene.Int(required=True)
@@ -395,27 +950,73 @@ class CreateEvaulation(graphene.Mutation):
     success = graphene.Boolean()
     message = graphene.String()
     internship = graphene.Field(InternshipNode)
+
     @custom_permission_required('internshipManage.InternshipApplicationEvaluation')
-    def mutate(self,info, internship_id, attedence, performance, adaptation, technical_skills, communication_skills, teamwork, overall_score, is_approved, comments=None):
+    def mutate(self, info, internship_id, attendance, performance, adaptation, technical_skills, communication_skills, teamwork, overall_score, is_approved, comments=None):
         try:
             user = info.context.user
             internship = Internship.objects.get(id=internship_id)
 
             if internship.company.user != user:
-                return CreateEvaulation(success=False, message="Bu staj sadece sirketi tarafından değerlendirilebilir.")
+                log_error(
+                    module_name="internship_management",
+                    message=f"Yetkisiz degerlendirme denemesi - Kullanici: {user.username}, Staj ID: {internship_id}",
+                    context={
+                        "internship_id": internship_id,
+                        "user_id": user.id
+                    }
+                )
+                return CreateEvaluation(success=False, message="Bu staj sadece sirketi tarafından değerlendirilebilir.")
             
-            if Evaulation.objects.filter(internship_id=internship_id).exists():
-                return CreateEvaulation(success=False, message="Bu staj için bir değerlendirme zaten mevcut.")
+            if Evaluation.objects.filter(internship_id=internship_id).exists():
+                log_error(
+                    module_name="internship_management",
+                    message=f"Bu staj için bir değerlendirme zaten mevcut - Staj ID: {internship_id}",
+                    context={
+                        "internship_id": internship_id,
+                        "user_id": user.id
+                    }
+                )
+                return CreateEvaluation(success=False, message="Bu staj için bir değerlendirme zaten mevcut.")
             
-            if attedence < 0 or performance < 0 or adaptation < 0 or technical_skills < 0 or communication_skills < 0 or teamwork < 0 or attedence > 100 or performance > 100 or adaptation > 100 or technical_skills > 100 or communication_skills > 100 or teamwork > 100:
-                return CreateEvaulation(success=False, message="Değerlendirme puanları 0 ile 100 arasında olmalıdır.")
+            scores = [attendance, performance, adaptation, technical_skills, communication_skills, teamwork]
+            if any(score < 0 or score > 100 for score in scores):
+                log_error(
+                    module_name="internship_management",
+                    message=f"Geçersiz puan - Staj ID: {internship_id}",
+                    context={
+                        "internship_id": internship_id,
+                        "user_id": user.id
+                    }
+                )
+                return CreateEvaluation(success=False, message="Değerlendirme puanları 0 ile 100 arasında olmalıdır.")
             
             if overall_score < 0 or overall_score > 100:
-                return CreateEvaulation(success=False, message="Genel puan 0 ile 100 arasında olmalıdır.")
+                log_error(
+                    module_name="internship_management",
+                    message=f"Geçersiz genel puan - Staj ID: {internship_id}",
+                    context={
+                        "internship_id": internship_id,
+                        "user_id": user.id
+                    }
+                )
+                return CreateEvaluation(success=False, message="Genel puan 0 ile 100 arasında olmalıdır.")
 
-            evaluation = Evaulation(
+            calculated_score = sum(scores) / len(scores)
+            if abs(float(overall_score) - calculated_score) > 5:
+                log_error(
+                    module_name="internship_management",
+                    message=f"Genel puan, diğer puanların ortalamasına yakın olmalıdır - Staj ID: {internship_id}",
+                    context={
+                        "internship_id": internship_id,
+                        "user_id": user.id
+                    }
+                )
+                return CreateEvaluation(success=False, message="Genel puan, diğer puanların ortalamasına yakın olmalıdır.")
+
+            evaluation = Evaluation(
                 internship=internship,
-                attedence=attedence,
+                attendance=attendance,
                 performance=performance,
                 adaptation=adaptation,
                 technical_skills=technical_skills,
@@ -426,11 +1027,177 @@ class CreateEvaulation(graphene.Mutation):
                 is_approved=is_approved
             )
             evaluation.save()
-            return CreateEvaulation(success=True, internship=internship, message="Staj degerlendirmesi basariyla olusturuldu.")
+            log_info(
+                module_name="internship_management",
+                message=f"Staj degerlendirmesi basariyla olusturuldu - Staj ID: {internship_id}",
+                context={
+                    "internship_id": internship_id,
+                    "user_id": user.id
+                }
+            )
+            return CreateEvaluation(success=True, internship=internship, message="Staj değerlendirmesi başarıyla oluşturuldu.")
         except Internship.DoesNotExist:
-            return CreateEvaulation(success=False, message="Staj bulunamadi.")
+            log_error(
+                module_name="internship_management",
+                message=f"Staj bulunamadi - Staj ID: {internship_id}",
+                context={
+                    "internship_id": internship_id,
+                    "user_id": user.id
+                }
+            )
+            return CreateEvaluation(success=False, message="Staj bulunamadı.")
         except Exception as e:
-            return CreateEvaulation(success=False, message=str(e))
+            log_error(
+                module_name="internship_management",
+                message=f"Staj degerlendirmesi olusturulurken hata: {str(e)}",
+                context={
+                    "internship_id": internship_id,
+                    "user_id": user.id
+                }
+            )
+            return CreateEvaluation(success=False, message=str(e))
+        
+class UpdateEvaluation(graphene.Mutation):
+    class Arguments:
+        evaluation_id = graphene.ID(required=True)
+        attendance = graphene.Int(required=False)
+        performance = graphene.Int(required=False)
+        adaptation = graphene.Int(required=False)
+        technical_skills = graphene.Int(required=False)
+        communication_skills = graphene.Int(required=False)
+        teamwork = graphene.Int(required=False)
+        comments = graphene.String(required=False)
+        overall_score = graphene.Decimal(required=False)
+        is_approved = graphene.Boolean(required=False)
+
+    success = graphene.Boolean()
+    message = graphene.String()
+
+    @custom_permission_required('internshipManage.InternshipApplicationEvaluation')
+    def mutate(self, info, evaluation_id,attendance, performance, adaptation, technical_skills, communication_skills, teamwork, overall_score, **kwargs):
+        try:
+            user = info.context.user
+            evaluation = Evaluation.objects.get(id=evaluation_id)
+
+            if evaluation.internship.company.user != user:
+                log_error(
+                    module_name="internship_management",
+                    message=f"Yetkisiz degerlendirme guncelleme denemesi - Kullanici: {user.username}, Degerlendirme ID: {evaluation_id}",
+                    context={
+                        "evaluation_id": evaluation_id,
+                        "user_id": user.id,
+                        "company_id": evaluation.internship.company.id
+                    }
+                )
+                return UpdateEvaluation(success=False, message="Bu staj sadece sirketi tarafindan guncellenebilir.")
+            
+            scores = [attendance, performance, adaptation, technical_skills, communication_skills, teamwork]
+            if any(score < 0 or score > 100 for score in scores):
+                log_error(
+                    module_name="internship_management",
+                    message=f"Geçersiz puan - Evaluation ID: {evaluation_id}",
+                    context={
+                        "evaluation_id": evaluation_id,
+                        "user_id": user.id
+                    }
+                )
+                return CreateEvaluation(success=False, message="Değerlendirme puanları 0 ile 100 arasında olmalıdır.")
+            
+            for attr, value in kwargs.items():
+                if value is not None:
+                    setattr(evaluation, attr, value)
+
+            evaluation.save()
+            log_info(
+                module_name="internship_management",
+                message=f"Staj degerlendirmesi guncellendi - Degerlendirme ID: {evaluation_id}, Kullanici: {user.username}",
+                context={
+                    "evaluation_id": evaluation_id,
+                    "user_id": user.id,
+                    "updated_fields": list(kwargs.keys())
+                }
+            )
+            return UpdateEvaluation(success=True, message="Staj degerlendirmesi basariyla guncellendi.")
+        except Evaluation.DoesNotExist:
+            log_error(
+                module_name="internship_management",
+                message=f"Degerlendirme bulunamadi - Degerlendirme ID: {evaluation_id}",
+                context={
+                    "evaluation_id": evaluation_id,
+                    "user_id": user.id
+                }
+            )
+            return UpdateEvaluation(success=False, message="Staj degerlendirmesi bulunamadi.")
+        except Exception as e:
+            log_error(
+                module_name="internship_management",
+                message=f"Degerlendirme guncellenirken hata: {str(e)}",
+                context={
+                    "evaluation_id": evaluation_id,
+                    "user_id": user.id,
+                    "error": str(e)
+                }
+            )
+            return UpdateEvaluation(success=False, message=str(e))
+        
+class EvaluationApproval(graphene.Mutation):
+    class Arguments:
+        evaluation_id = graphene.ID(required=True)
+
+    success = graphene.Boolean()
+    message = graphene.String()
+
+    @custom_permission_required('internshipManage.InternshipApplicationEvaluation')
+    def mutate(self, info, evaluation_id):
+        try:
+            user = info.context.user
+            evaluation = Evaluation.objects.get(id=evaluation_id)
+
+            if evaluation.internship.company.user != user:
+                log_error(
+                    module_name="internship_management",
+                    message=f"Yetkisiz degerlendirme onaylama denemesi - Kullanici: {user.username}, Degerlendirme ID: {evaluation_id}",
+                    context={
+                        "evaluation_id": evaluation_id,
+                        "user_id": user.id,
+                        "company_id": evaluation.internship.company.id
+                    }
+                )
+                return EvaluationApproval(success=False, message="Bu staj sadece sirketi tarafindan guncellenebilir.")
+
+            evaluation.is_approved = True
+            evaluation.save()
+            log_info(
+                module_name="internship_management",
+                message=f"Staj degerlendirmesi onaylandi - Degerlendirme ID: {evaluation_id}, Kullanici: {user.username}",
+                context={
+                    "evaluation_id": evaluation_id,
+                    "user_id": user.id,
+                    "student_id": evaluation.internship.student.id
+                }
+            )
+            return EvaluationApproval(success=True, message="Staj degerlendirmesi onaylandi.")
+        except Evaluation.DoesNotExist:
+            log_error(
+                module_name="internship_management",
+                message=f"Onaylanacak degerlendirme bulunamadi - Degerlendirme ID: {evaluation_id}",
+                context={
+                    "evaluation_id": evaluation_id,
+                    "user_id": user.id
+                }
+            )
+            return EvaluationApproval(success=False, message="Staj degerlendirmesi bulunamadi.")
+        except Exception as e:
+            log_error(
+                module_name="internship_management",
+                message=f"Degerlendirme onaylanirken hata: {str(e)}",
+                context={
+                    "evaluation_id": evaluation_id,
+                    "user_id": user.id,
+                    "error": str(e)
+                }
+            )
+            return EvaluationApproval(success=False, message=str(e))
 
 #-------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 class InternshipQuery(graphene.ObjectType):
@@ -440,8 +1207,8 @@ class InternshipQuery(graphene.ObjectType):
     internship_diary = graphene.relay.Node.Field(InternshipDiaryNode)
     internship_diaries = DjangoFilterConnectionField(InternshipDiaryNode)
 
-    evaulation = graphene.relay.Node.Field(EvaulationNode)
-    evaulations = DjangoFilterConnectionField(EvaulationNode)
+    evaluation = graphene.relay.Node.Field(EvaluationNode)
+    evaluations = DjangoFilterConnectionField(EvaluationNode)
 
 class InternshipMutation(graphene.ObjectType):
     create_internship_application = CreateInternshipApplication.Field()
@@ -453,6 +1220,8 @@ class InternshipMutation(graphene.ObjectType):
     create_internship_diary = CreateInternshipDiary.Field()
     update_internship_diary = UpdateInternshipDiary.Field()
     update_internship_diary_status = InternshipDiaryStatusUpdate.Field()
+    delete_internship_diary = DeleteInternshipDiary.Field()
 
-    create_evaulation = CreateEvaulation.Field()
-   
+    create_evaluation = CreateEvaluation.Field()
+    update_evaluation = UpdateEvaluation.Field()
+    evaluation_approval = EvaluationApproval.Field()

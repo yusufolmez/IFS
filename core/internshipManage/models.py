@@ -7,10 +7,10 @@ class Internship(BaseModel):
         Approved_by_company = 'approved_by_company', 'Approved by Company'
         Approved_by_admin = 'approved_by_admin', 'Approved by Admin'
         Rejected = 'rejected', 'Rejected'
-        Complated = 'completed', 'Completed'
+        Completed = 'completed', 'Completed'
 
     student = models.ForeignKey(Student, on_delete=models.CASCADE, related_name='internships_student')
-    company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name='internships_compmany')
+    company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name='internships_company')
     start_date = models.DateField()
     end_date = models.DateField()
     total_working_days = models.IntegerField(null=True, blank=True)
@@ -37,9 +37,9 @@ class InternshipDiary(BaseModel):
     def __str__(self):
         return f"{self.internship} - {self.date} - {self.hours_worked}"
 
-class Evaulation(BaseModel):
+class Evaluation(BaseModel):
     internship = models.ForeignKey(Internship, on_delete=models.CASCADE, related_name='evaluations')
-    attedence = models.IntegerField()
+    attendance = models.IntegerField()
     performance = models.IntegerField()
     adaptation = models.IntegerField()
     technical_skills = models.IntegerField()

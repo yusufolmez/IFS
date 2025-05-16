@@ -20,10 +20,8 @@ from graphene_file_upload.scalars import Upload
 
 from .utils.constants import USER_TYPES, ERROR_MESSAGES
 from .utils.validators import UserValidator
-from core.utils.logging import get_logger
-from django.core.cache import cache
-
-logger = get_logger(__name__)
+from core.utils.logging import log_error, log_info
+from django.core.cache import cache\
 
 #-------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
@@ -81,7 +79,11 @@ def get_cache():
         cache.get('test_key')
         return cache
     except Exception as e:
-        logger.error("Redis bağlantı hatası", extra={"error": str(e)})
+        log_error(
+            module_name="user_management",
+            message="Redis bağlantı hatası",
+            context={"error": str(e)}
+        )
         return None
 
 class AuthMutation(graphene.Mutation):
@@ -95,10 +97,20 @@ class AuthMutation(graphene.Mutation):
         try:
             cache = get_cache()
             if cache is None:
-                logger.error("Rate limiting devre dışı - Redis bağlantısı yok")
+                log_error(
+                    module_name="user_management",
+                    message="Redis bağlantı hatası - Rate limiting devre dışı",
+                    context={
+                        "error": "Redis connection failed",
+                        "client_ip": info.context.META.get('REMOTE_ADDR', 'Unknown'),
+                        "user_agent": info.context.META.get('HTTP_USER_AGENT', 'Unknown')
+                    }
+                )
                 raise Exception("Sistem şu anda kullanılamıyor. Lütfen daha sonra tekrar deneyin.")
 
-            cache_key = f"auth_attempt_{usernameoremail}"
+            client_ip = info.context.META.get('REMOTE_ADDR', 'Unknown')
+            user_agent = info.context.META.get('HTTP_USER_AGENT', 'Unknown')
+            cache_key = f"auth_attempt_{usernameoremail}_{client_ip}"
             attempts = cache.get(cache_key)
             
             if attempts is None:
@@ -109,11 +121,17 @@ class AuthMutation(graphene.Mutation):
                 cache.set(cache_key, attempts, 60)
             
             if attempts >= 5:
-                logger.error("Çok fazla giriş denemesi", extra={
-                    "usernameoremail": usernameoremail,
-                    "attempts": attempts,
-                    "cache_key": cache_key
-                })
+                log_error(
+                    module_name="user_management",
+                    message="Çok fazla giriş denemesi",
+                    context={
+                        "username": usernameoremail,
+                        "attempts": attempts,
+                        "client_ip": client_ip,
+                        "user_agent": user_agent,
+                        "cache_key": cache_key
+                    }
+                )
                 raise Exception("Çok fazla giriş denemesi yaptınız. Lütfen 1 dakika bekleyin.")
 
             if '@' in usernameoremail:
@@ -121,37 +139,66 @@ class AuthMutation(graphene.Mutation):
                     user = CustomUser.objects.get(email=usernameoremail)
                     username = user.username
                 except CustomUser.DoesNotExist:
-                    logger.error("Email ile kullanıcı bulunamadı", extra={"email": usernameoremail})
+                    log_error(
+                        module_name="user_management",
+                        message="Email ile kullanıcı bulunamadı",
+                        context={
+                            "email": usernameoremail,
+                            "client_ip": client_ip,
+                            "user_agent": user_agent
+                        }
+                    )
                     raise Exception(ERROR_MESSAGES['USER_NOT_FOUND'])
             else: 
                 username = usernameoremail
 
             user = authenticate(username=username, password=password)
             if user is None:
-                logger.error("Geçersiz giriş bilgileri", extra={
-                    "username": username,
-                    "attempts": attempts,
-                    "cache_key": cache_key
-                })
+                log_error(
+                    module_name="user_management",
+                    message="Geçersiz giriş bilgileri",
+                    context={
+                        "username": username,
+                        "attempts": attempts,
+                        "client_ip": client_ip,
+                        "user_agent": user_agent,
+                        "cache_key": cache_key
+                    }
+                )
                 raise Exception("Geçersiz giriş bilgileri!")
 
             cache.delete(cache_key)
             access_token = generate_access_token(user)
             refresh_token = generate_refresh_token(user)
 
-            client_ip = info.context.META.get('REMOTE_ADDR', 'Bilinmeyen IP')
-            logger.info(f"Başarılı giriş - Kullanıcı: {user.email} - IP: {client_ip} - Rate limit sıfırlandı")
+            log_info(
+                module_name="user_management",
+                message="Başarılı giriş",
+                context={
+                    "user_id": user.id,
+                    "username": user.username,
+                    "email": user.email,
+                    "client_ip": client_ip,
+                    "user_agent": user_agent,
+                    "role": user.role.name if user.role else None
+                }
+            )
 
             return cls(tokens=TokenType(access_token=access_token, refresh_token=refresh_token))
 
         except Exception as e:
-            logger.error("Giriş işlemi başarısız", extra={
-                "error": str(e),
-                "usernameoremail": usernameoremail,
-                "attempts": attempts if 'attempts' in locals() else None,
-                "cache_key": cache_key if 'cache_key' in locals() else None
-            })
-            raise
+            log_error(
+                module_name="user_management",
+                message="Giriş işlemi başarısız",
+                context={
+                    "error": str(e),
+                    "usernameoremail": usernameoremail,
+                    "client_ip": info.context.META.get('REMOTE_ADDR', 'Unknown'),
+                    "user_agent": info.context.META.get('HTTP_USER_AGENT', 'Unknown'),
+                    "stack_trace": str(e.__traceback__)
+                }
+            )
+            raise Exception(str(e))
     
 class RefreshTokenMutation(graphene.Mutation):
     tokens = graphene.Field(TokenType)
@@ -161,37 +208,104 @@ class RefreshTokenMutation(graphene.Mutation):
     @classmethod
     def mutate(cls, root, info, refresh_token):
         try:
+            client_ip = info.context.META.get('REMOTE_ADDR', 'Unknown')
+            user_agent = info.context.META.get('HTTP_USER_AGENT', 'Unknown')
+            
             cache = get_cache()
-            cache_key = f"refresh_token_{refresh_token[:10]}"
+            cache_key = f"refresh_token_{refresh_token[:10]}_{client_ip}"
             if cache.get(cache_key):
+                log_error(
+                    module_name="user_management",
+                    message="Çok sık token yenileme denemesi",
+                    context={
+                        "client_ip": client_ip,
+                        "user_agent": user_agent,
+                        "token_prefix": refresh_token[:10]
+                    }
+                )
                 raise Exception("Çok sık token yenileme denemesi yapıyorsunuz. Lütfen bekleyin.")
             cache.set(cache_key, True, 30)
 
             payload = jwt.decode(refresh_token, settings.SECRET_KEY, algorithms=['HS256'])
             if payload.get('token_type') != 'refresh':
-                logger.error("Geçersiz token tipi", extra={"token_type": payload.get('token_type')})
+                log_error(
+                    module_name="user_management",
+                    message="Geçersiz token tipi",
+                    context={
+                        "token_type": payload.get('token_type'),
+                        "client_ip": client_ip,
+                        "user_agent": user_agent,
+                        "token_prefix": refresh_token[:10]
+                    }
+                )
                 raise Exception("Token tipi refresh değil")
             
             try:
                 user = CustomUser.objects.get(id=payload['user_id'])
             except CustomUser.DoesNotExist:
-                logger.error("Token için kullanıcı bulunamadı", extra={"user_id": payload['user_id']})
+                log_error(
+                    module_name="user_management",
+                    message="Token için kullanıcı bulunamadı",
+                    context={
+                        "user_id": payload['user_id'],
+                        "client_ip": client_ip,
+                        "user_agent": user_agent,
+                        "token_prefix": refresh_token[:10]
+                    }
+                )
                 raise Exception(ERROR_MESSAGES['USER_NOT_FOUND'])
 
             access_token = generate_access_token(user)
             refresh_token = generate_refresh_token(user)
 
-            logger.info("Token yenileme başarılı", extra={"user_id": user.id})
+            log_info(
+                module_name="user_management",
+                message="Token yenileme başarılı",
+                context={
+                    "user_id": user.id,
+                    "username": user.username,
+                    "email": user.email,
+                    "client_ip": client_ip,
+                    "user_agent": user_agent,
+                    "role": user.role.name if user.role else None
+                }
+            )
             return cls(tokens=TokenType(access_token=access_token, refresh_token=refresh_token))
 
         except jwt.ExpiredSignatureError:
-            logger.error("Refresh token süresi dolmuş", extra={"token": refresh_token[:10]})
+            log_error(
+                module_name="user_management",
+                message="Refresh token süresi dolmuş",
+                context={
+                    "token_prefix": refresh_token[:10],
+                    "client_ip": client_ip,
+                    "user_agent": user_agent
+                }
+            )
             raise Exception("Refresh token süresi dolmuş.")
         except jwt.InvalidTokenError:
-            logger.error("Geçersiz refresh token", extra={"token": refresh_token[:10]})
+            log_error(
+                module_name="user_management",
+                message="Geçersiz refresh token",
+                context={
+                    "token_prefix": refresh_token[:10],
+                    "client_ip": client_ip,
+                    "user_agent": user_agent
+                }
+            )
             raise Exception("Geçersiz refresh token.")
         except Exception as e:
-            logger.error("Token yenileme hatası", extra={"error": str(e)})
+            log_error(
+                module_name="user_management",
+                message="Token yenileme hatası",
+                context={
+                    "error": str(e),
+                    "client_ip": client_ip,
+                    "user_agent": user_agent,
+                    "token_prefix": refresh_token[:10],
+                    "stack_trace": str(e.__traceback__)
+                }
+            )
             raise
         
 class LogoutMutation(graphene.Mutation):
@@ -205,22 +319,60 @@ class LogoutMutation(graphene.Mutation):
     @classmethod
     def mutate(cls, root, info, access_token, refresh_token):
         try:
+            client_ip = info.context.META.get('REMOTE_ADDR', 'Unknown')
+            user_agent = info.context.META.get('HTTP_USER_AGENT', 'Unknown')
+            
             cache = get_cache()
-            cache_key = f"logout_{access_token[:10]}"
+            cache_key = f"logout_{access_token[:10]}_{client_ip}"
             if cache.get(cache_key):
+                log_error(
+                    module_name="user_management",
+                    message="Çok sık çıkış denemesi",
+                    context={
+                        "client_ip": client_ip,
+                        "user_agent": user_agent,
+                        "token_prefix": access_token[:10]
+                    }
+                )
                 raise Exception("Çok sık çıkış denemesi yapıyorsunuz. Lütfen bekleyin.")
             cache.set(cache_key, True, 30)
 
             token_blacklist = TokenBlacklist()
             if token_blacklist.logout(access_token, refresh_token):
-                logger.info("Başarılı çıkış", extra={"access_token": access_token[:10]})
+                log_info(
+                    module_name="user_management",
+                    message="Başarılı çıkış",
+                    context={
+                        "token_prefix": access_token[:10],
+                        "client_ip": client_ip,
+                        "user_agent": user_agent
+                    }
+                )
                 return cls(success=True, message="Çıkış işlemi başarılı.")
             else:
-                logger.error("Çıkış işlemi başarısız", extra={"access_token": access_token[:10]})
+                log_error(
+                    module_name="user_management",
+                    message="Çıkış işlemi başarısız",
+                    context={
+                        "token_prefix": access_token[:10],
+                        "client_ip": client_ip,
+                        "user_agent": user_agent
+                    }
+                )
                 return cls(success=False, message="Çıkış işlemi başarısız.")
 
         except Exception as e:
-            logger.error("Çıkış işlemi hatası", extra={"error": str(e)})
+            log_error(
+                module_name="user_management",
+                message="Çıkış işlemi hatası",
+                context={
+                    "error": str(e),
+                    "client_ip": client_ip,
+                    "user_agent": user_agent,
+                    "token_prefix": access_token[:10],
+                    "stack_trace": str(e.__traceback__)
+                }
+            )
             return cls(success=False, message=str(e))
         
 #-------------------------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -254,6 +406,11 @@ class CreateUserMutation(graphene.Mutation):
     def _validate_user_data(data):
         if 'email' in data:
             UserValidator.validate_email(data['email'])
+            try:
+                CustomUser.objects.get(email=data['email'])
+                raise Exception("Kullanici email'i mevcut")
+            except CustomUser.DoesNotExist:
+                pass
         if 'password' in data:
             UserValidator.validate_password(data['password'])
         if 'phone_number' in data:
@@ -282,7 +439,11 @@ class CreateUserMutation(graphene.Mutation):
                 try:
                     role = CustomRole.objects.get(id=role_id)
                 except CustomRole.DoesNotExist:
-                    logger.error("Rol bulunamadı", extra={"role_id": role_id})
+                    log_error(
+                        module_name="user_management",
+                        message="Rol bulunamadı",
+                        context={"role_id": role_id}
+                    )
                     return cls(success=False, message="Rol bulunamadı")
 
                 user = CustomUser.objects.create_user(
@@ -325,15 +486,27 @@ class CreateUserMutation(graphene.Mutation):
                     user.save()
                     subject, context = get_admin_mail_context(email, password)
                 else:
-                    logger.error("Geçersiz kullanıcı tipi", extra={"user_type": user_type})
+                    log_error(
+                        module_name="user_management",
+                        message="Geçersiz kullanıcı tipi",
+                        context={"user_type": user_type}
+                    )
                     return cls(success=False, message="Geçersiz kullanıcı tipi")
 
                 send_registration_mail(subject, context, email)
-                logger.info("Kullanıcı başarıyla oluşturuldu", extra={"user_id": user.id})
+                log_info(
+                    module_name="user_management",
+                    message="Kullanıcı başarıyla oluşturuldu",
+                    context={"user_id": user.id}
+                )
                 return cls(message="Kullanıcı başarıyla oluşturuldu", success=True, user=user)
 
         except Exception as e:
-            logger.error("Kullanıcı oluşturma hatası", extra={"error": str(e)})
+            log_error(
+                module_name="user_management",
+                message="Kullanıcı oluşturma hatası",
+                context={"error": str(e)}
+            )
             raise Exception(f"Kullanıcı oluşturulurken hata oluştu: {str(e)}")
             
 class UpdateProfileByAdminMutation(graphene.Mutation):
@@ -362,6 +535,7 @@ class UpdateProfileByAdminMutation(graphene.Mutation):
     message = graphene.String()
 
     @classmethod
+    @custom_permission_required('userManage.UserUpdate')
     def mutate(cls, root, info, **kwargs):
         try:
             user = CustomUser.objects.get(id=kwargs.get('user_id'))
@@ -428,7 +602,11 @@ class UpdateProfileByAdminMutation(graphene.Mutation):
         except CustomUser.DoesNotExist:
             raise Exception("Kullanıcı bulunamadı.")
         except Exception as e:
-            logger.error("Profil güncelleme hatası", extra={"error": str(e)})
+            log_error(
+                module_name="user_management",
+                message="Profil güncelleme hatası",
+                context={"error": str(e)}
+            )
             raise Exception(f"Profil güncellenirken hata oluştu: {str(e)}")
         
 class UpdateMyProfileMutation(graphene.Mutation):
@@ -481,10 +659,18 @@ class UpdateMyProfileMutation(graphene.Mutation):
                 upload_to_blob(data['profile_picture'], 'profile-pictures')
             
             student.save()
-            logger.info("Öğrenci profili güncellendi", extra={"student_id": student.id})
+            log_info(
+                module_name="user_management",
+                message="Öğrenci profili güncellendi",
+                context={"student_id": student.id}
+            )
             return "Öğrenci bilgileri güncellendi."
         except Exception as e:
-            logger.error("Öğrenci profili güncellenirken hata oluştu", extra={"error": str(e)})
+            log_error(
+                module_name="user_management",
+                message="Öğrenci profili güncellenirken hata oluştu",
+                context={"error": str(e)}
+            )
             raise
 
     @staticmethod
@@ -498,10 +684,18 @@ class UpdateMyProfileMutation(graphene.Mutation):
             company.tax_number = data.get('tax_number', company.tax_number)
             
             company.save()
-            logger.info("Şirket profili güncellendi", extra={"company_id": company.id})
+            log_info(
+                module_name="user_management",
+                message="Şirket profili güncellendi",
+                context={"company_id": company.id}
+            )
             return "Şirket bilgileri güncellendi."
         except Exception as e:
-            logger.error("Şirket profili güncellenirken hata oluştu", extra={"error": str(e)})
+            log_error(
+                module_name="user_management",
+                message="Şirket profili güncellenirken hata oluştu",
+                context={"error": str(e)}
+            )
             raise
 
     @classmethod
@@ -513,10 +707,14 @@ class UpdateMyProfileMutation(graphene.Mutation):
 
             token_user_id = info.context.user.id
             if token_user_id != user.id:
-                logger.error("Kullanıcı ID uyuşmazlığı", extra={
-                    "token_user_id": token_user_id,
-                    "request_user_id": user.id
-                })
+                log_error(
+                    module_name="user_management",
+                    message="Kullanıcı ID uyuşmazlığı",
+                    context={
+                        "token_user_id": token_user_id,
+                        "request_user_id": user.id
+                    }
+                )
                 raise Exception("Geçersiz kullanıcı oturumu.")
 
             cache = get_cache()
@@ -526,12 +724,16 @@ class UpdateMyProfileMutation(graphene.Mutation):
             cache.set(cache_key, True, 15)
 
             user_role = user.role.name.lower()
-            logger.info("Kullanıcı rolü kontrolü", extra={
-                "user_id": user.id,
-                "role": user_role,
-                "raw_role": user.role.name,
-                "token_user_id": token_user_id
-            })
+            log_info(
+                module_name="user_management",
+                message="Kullanıcı rolü kontrolü",
+                context={
+                    "user_id": user.id,
+                    "role": user_role,
+                    "raw_role": user.role.name,
+                    "token_user_id": token_user_id
+                }
+            )
 
             cls._validate_input_data(kwargs)
 
@@ -558,9 +760,17 @@ class UpdateMyProfileMutation(graphene.Mutation):
                             html_message=html_message,
                             fail_silently=True,
                         )
-                        logger.info("Şifre değişikliği e-postası gönderildi", extra={"user_id": user.id})
+                        log_info(
+                            module_name="user_management",
+                            message="Şifre değişikliği e-postası gönderildi",
+                            context={"user_id": user.id}
+                        )
                     except Exception as e:
-                        logger.error("Şifre değişikliği e-postası gönderilemedi", extra={"error": str(e)})
+                        log_error(
+                            module_name="user_management",
+                            message="Şifre değişikliği e-postası gönderilemedi",
+                            context={"error": str(e)}
+                        )
 
                 if 'username' in kwargs:
                     user.username = kwargs['username']
@@ -589,10 +799,18 @@ class UpdateMyProfileMutation(graphene.Mutation):
                 return cls(success=True, message=message)
 
         except CustomUser.DoesNotExist:
-            logger.error("Kullanıcı bulunamadı", extra={"user_id": user.id})
+            log_error(
+                module_name="user_management",
+                message="Kullanıcı bulunamadı",
+                context={"user_id": user.id}
+            )
             raise Exception(ERROR_MESSAGES['USER_NOT_FOUND'])
         except Exception as e:
-            logger.error("Profil güncellenirken hata oluştu", extra={"error": str(e)})
+            log_error(
+                module_name="user_management",
+                message="Profil güncellenirken hata oluştu",
+                context={"error": str(e)}
+            )
             raise Exception(f"Bir hata oluştu: {str(e)}")
     
 #-------------------------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -609,27 +827,51 @@ class UserManageQuery(graphene.ObjectType):
     def resolve_mycompany(self, info):
         user = info.context.user
         if not user.is_authenticated:
-            logger.error("Yetkilendirme hatası - Kullanıcı giriş yapmamış", extra={"user_id": user.id if user else None})
+            log_error(
+                module_name="user_management",
+                message="Yetkilendirme hatası - Kullanıcı giriş yapmamış",
+                context={"user_id": user.id if user else None}
+            )
             raise Exception("Lütfen giriş yapınız.")
         try:
             company = Company.objects.get(user=user)
-            logger.info("Şirket bilgileri başarıyla getirildi", extra={"company_id": company.id})
+            log_info(
+                module_name="user_management",
+                message="Şirket bilgileri başarıyla getirildi",
+                context={"company_id": company.id}
+            )
             return company
         except Company.DoesNotExist:
-            logger.error("Şirket bulunamadı", extra={"user_id": user.id})
+            log_error(
+                module_name="user_management",
+                message="Şirket bulunamadı",
+                context={"user_id": user.id}
+            )
             raise Exception("Şirket bulunamadı.")
 
     def resolve_me(self, info):
         user = info.context.user
         if not user.is_authenticated:
-            logger.error("Yetkilendirme hatası - Kullanıcı giriş yapmamış", extra={"user_id": user.id if user else None})
+            log_error(
+                module_name="user_management",
+                message="Yetkilendirme hatası - Kullanıcı giriş yapmamış",
+                context={"user_id": user.id if user else None}
+            )
             raise Exception("Lütfen giriş yapınız.")
         try:
             student = Student.objects.get(user=user)
-            logger.info("Öğrenci bilgileri başarıyla getirildi", extra={"student_id": student.id})
+            log_info(
+                module_name="user_management",
+                message=f"Öğrenci bilgileri başarıyla getirildi, ogrenci Id:{student.id}",
+                context={"student_id": student.id}
+            )
             return student
         except Student.DoesNotExist:
-            logger.error("Öğrenci bulunamadı", extra={"user_id": user.id})
+            log_error(
+                module_name="user_management",
+                message="Öğrenci bulunamadı",
+                context={"user_id": user.id}
+            )
             raise Exception("Öğrenci bulunamadı.")
                 
 #-------------------------------------------------------------------------------------------------------------------------------------------------------------------------

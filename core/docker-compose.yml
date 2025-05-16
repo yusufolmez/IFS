@@ -1,6 +1,25 @@
 version: "3.8"
 
 services:
+  db:
+    image: postgres:15
+    container_name: postgres_db
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    environment:
+      - POSTGRES_DB=${DB_NAME}
+      - POSTGRES_USER=${DB_USER}
+      - POSTGRES_PASSWORD=${DB_PASSWORD}
+    ports:
+      - "5432:5432"
+    networks:
+      - app_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER} -d ${DB_NAME}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
   redis:
     image: redis:latest
     container_name: redis_cache
@@ -34,9 +53,16 @@ services:
       - REDIS_PASSWORD=${REDIS_PASSWORD}
       - REDIS_HOST=redis
       - REDIS_PORT=6379
+      - DB_NAME=${DB_NAME}
+      - DB_USER=${DB_USER}
+      - DB_PASSWORD=${DB_PASSWORD}
+      - DB_HOST=db
+      - DB_PORT=5432
     restart: always
     depends_on:
       redis:
+        condition: service_healthy
+      db:
         condition: service_healthy
     networks:
       - app_network
@@ -53,6 +79,11 @@ services:
       - REDIS_PASSWORD=${REDIS_PASSWORD}
       - REDIS_HOST=redis
       - REDIS_PORT=6379
+      - DB_NAME=${DB_NAME}
+      - DB_USER=${DB_USER}
+      - DB_PASSWORD=${DB_PASSWORD}
+      - DB_HOST=db
+      - DB_PORT=5432
     command: >
       bash -c "apt-get update && apt-get install -y cron && 
       service cron start && 
@@ -68,6 +99,8 @@ networks:
     driver: bridge
 
 volumes:
+  postgres_data:
+    name: postgres_data
   redis_data:
     name: redis_data
   logs:
