@@ -21,7 +21,7 @@ from graphene_file_upload.scalars import Upload
 from .utils.constants import USER_TYPES, ERROR_MESSAGES
 from .utils.validators import UserValidator
 from core.utils.logging import log_error, log_info
-from django.core.cache import cache\
+from django.core.cache import cache
 
 #-------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
@@ -534,80 +534,178 @@ class UpdateProfileByAdminMutation(graphene.Mutation):
     success = graphene.Boolean()
     message = graphene.String()
 
+    @staticmethod
+    def _update_base_user(user, kwargs):
+        """Temel kullanıcı bilgilerini günceller"""
+        if 'usernameoremail' in kwargs:
+            user.username = kwargs['usernameoremail']
+        if 'email' in kwargs:
+            user.email = kwargs['email']
+        if 'password' in kwargs:
+            user.set_password(kwargs['password'])
+        user.save()
+
+    @staticmethod
+    def _update_user_role(user, role_id):
+        """Kullanıcı rolünü günceller"""
+        try:
+            role = CustomRole.objects.get(id=role_id)
+            user.role = role
+            user.save()
+            return True, None
+        except CustomRole.DoesNotExist:
+            log_error(
+                module_name="user_management",
+                message="Rol bulunamadı",
+                context={"user_id": user.id, "role_id": role_id}
+            )
+            return False, "Rol bulunamadı."
+
+    @staticmethod
+    def _update_profile_picture(entity, profile_picture, user_id, entity_type, entity_id):
+        """Profil resmini günceller"""
+        try:
+            profile_pic_url = upload_to_blob(profile_picture, 'profile-pictures')
+            entity.profile_picture = profile_pic_url
+            log_info(
+                module_name="user_management",
+                message=f"{entity_type} profil resmi güncellendi",
+                context={"user_id": user_id, f"{entity_type.lower()}_id": entity_id}
+            )
+            return True, None
+        except Exception as e:
+            log_error(
+                module_name="user_management",
+                message=f"{entity_type} profil resmi yükleme hatası",
+                context={"error": str(e), "user_id": user_id, f"{entity_type.lower()}_id": entity_id}
+            )
+            return False, f"Profil resmi yüklenirken hata oluştu: {str(e)}"
+
+    @staticmethod
+    def _update_student(user, kwargs):
+        """Öğrenci bilgilerini günceller"""
+        try:
+            student = Student.objects.get(user=user)
+            if not student:
+                return False, "Öğrenci bulunamadı."
+
+            student_fields = ['first_name', 'last_name', 'student_number', 'department', 
+                            'faculty', 'phone_number', 'address', 'date_of_birth']
+            for field in student_fields:
+                if field in kwargs:
+                    setattr(student, field, kwargs[field])
+
+            if 'profile_picture' in kwargs:
+                success, error = UpdateProfileByAdminMutation._update_profile_picture(
+                    student, kwargs['profile_picture'], user.id, "Öğrenci", student.id
+                )
+                if not success:
+                    return False, error
+
+            student.save()
+            log_info(
+                module_name="user_management",
+                message="Öğrenci bilgileri admin tarafından güncellendi",
+                context={"user_id": user.id, "student_id": student.id, "updated_fields": list(kwargs.keys())}
+            )
+            return True, "Öğrenci bilgileri admin tarafından güncellendi."
+        except Student.DoesNotExist:
+            log_error(
+                module_name="user_management",
+                message="Öğrenci kaydı bulunamadı",
+                context={"user_id": user.id}
+            )
+            return False, "Öğrenci kaydı bulunamadı."
+
+    @staticmethod
+    def _update_company(user, kwargs):
+        """Şirket bilgilerini günceller"""
+        try:
+            company = Company.objects.get(user=user)
+            if not company:
+                return False, "Şirket bulunamadı."
+
+            company_fields = ['company_name', 'contact_person', 'phone_number', 
+                            'address', 'website', 'tax_number']
+            for field in company_fields:
+                if field in kwargs:
+                    setattr(company, field, kwargs[field])
+
+            company.save()
+            log_info(
+                module_name="user_management",
+                message="Şirket bilgileri güncellendi",
+                context={"user_id": user.id, "company_id": company.id, "updated_fields": list(kwargs.keys())}
+            )
+            return True, "Şirket bilgileri güncellendi."
+        except Company.DoesNotExist:
+            log_error(
+                module_name="user_management",
+                message="Şirket kaydı bulunamadı",
+                context={"user_id": user.id}
+            )
+            return False, "Şirket kaydı bulunamadı."
+
     @classmethod
     @custom_permission_required('userManage.UserUpdate')
     def mutate(cls, root, info, **kwargs):
         try:
             user = CustomUser.objects.get(id=kwargs.get('user_id'))
-            if user.role.name == 'admin':
-                raise Exception("Admin kullanıcısı güncellenemez.")
+            if user.role.name == 'Admin':
+                log_error(
+                    module_name="user_management",
+                    message="Admin kullanıcısı güncelleme denemesi",
+                    context={"user_id": user.id}
+                )
+                return cls(success=False, message="Admin kullanıcısı güncellenemez.")
+
             if len(kwargs.keys()) == 1:
-                raise Exception("Herhangi bir güncelleme yapılmadı. En az bir alan doldurulmalıdır.")
+                log_error(
+                    module_name="user_management",
+                    message="Güncelleme alanı eksik",
+                    context={"user_id": user.id, "provided_fields": list(kwargs.keys())}
+                )
+                return cls(success=False, message="Herhangi bir güncelleme yapılmadı. En az bir alan doldurulmalıdır.")
 
-            if 'usernameoremail' in kwargs:
-                user.username = kwargs['usernameoremail']
-            if 'email' in kwargs:
-                user.email = kwargs['email']
-            if 'password' in kwargs:
-                user.set_password(kwargs['password'])
+            cls._update_base_user(user, kwargs)
+
             if 'role_id' in kwargs:
-                try:
-                    role = CustomRole.objects.get(id=kwargs['role_id'])
-                    user.role = role
-                except CustomRole.DoesNotExist:
-                    raise Exception("Rol bulunamadı.")
-            
-            user.save()
+                success, error = cls._update_user_role(user, kwargs['role_id'])
+                if not success:
+                    return cls(success=False, message=error)
 
-            if user.role.name == 'student':
-                student = Student.objects.get(user=user)
-                if not student:
-                    raise Exception("Öğrenci bulunamadı.")
-                
-                student.first_name = kwargs.get('first_name', student.first_name)
-                student.last_name = kwargs.get('last_name', student.last_name)
-                student.student_number = kwargs.get('student_number', student.student_number)
-                student.department = kwargs.get('department', student.department)
-                student.faculty = kwargs.get('faculty', student.faculty)
-                student.phone_number = kwargs.get('phone_number', student.phone_number)
-                student.address = kwargs.get('address', student.address)
-                student.date_of_birth = kwargs.get('date_of_birth', student.date_of_birth)
-                
-                if 'profile_picture' in kwargs:
-                    profile_pic_url = upload_to_blob(kwargs['profile_picture'], 'profile-pictures')
-                    student.profile_picture = profile_pic_url
-                
-                student.save()
-                return UpdateProfileByAdminMutation(success=True, message="Öğrenci bilgileri güncellendi.")
-
-            if user.role.name == 'company':
-                company = Company.objects.get(user=user)
-                if not company:
-                    raise Exception("Şirket bulunamadı.")
-                
-                company.company_name = kwargs.get('company_name', company.company_name)
-                company.contact_person = kwargs.get('contact_person', company.contact_person)
-                company.phone_number = kwargs.get('phone_number', company.phone_number)
-                company.address = kwargs.get('address', company.address)
-                company.website = kwargs.get('website', company.website)
-                company.tax_number = kwargs.get('tax_number', company.tax_number)
-                
-                if 'profile_picture' in kwargs:
-                    profile_pic_url = upload_to_blob(kwargs['profile_picture'], 'profile-pictures')
-                    company.profile_picture = profile_pic_url
-                
-                company.save()
-                return UpdateProfileByAdminMutation(success=True, message="Şirket bilgileri güncellendi.")
+            if user.role.name == 'Student':
+                success, message = cls._update_student(user, kwargs)
+                return cls(success=success, message=message)
+            elif user.role.name == 'Company':
+                success, message = cls._update_company(user, kwargs)
+                return cls(success=success, message=message)
+            else:
+                log_error(
+                    module_name="user_management",
+                    message="Geçersiz kullanıcı rolü",
+                    context={"user_id": user.id, "role": user.role.name}
+                )
+                return cls(success=False, message="Geçersiz kullanıcı rolü.")
 
         except CustomUser.DoesNotExist:
-            raise Exception("Kullanıcı bulunamadı.")
+            log_error(
+                module_name="user_management",
+                message="Kullanıcı bulunamadı",
+                context={"user_id": kwargs.get('user_id')}
+            )
+            return cls(success=False, message="Kullanıcı bulunamadı.")
         except Exception as e:
             log_error(
                 module_name="user_management",
                 message="Profil güncelleme hatası",
-                context={"error": str(e)}
+                context={
+                    "error": str(e),
+                    "user_id": kwargs.get('user_id'),
+                    "stack_trace": str(e.__traceback__)
+                }
             )
-            raise Exception(f"Profil güncellenirken hata oluştu: {str(e)}")
+            return cls(success=False, message=f"Profil güncellenirken hata oluştu: {str(e)}")
         
 class UpdateMyProfileMutation(graphene.Mutation):
     class Arguments:
@@ -723,7 +821,7 @@ class UpdateMyProfileMutation(graphene.Mutation):
                 raise Exception("Çok sık güncelleme yapıyorsunuz. Lütfen bekleyin.")
             cache.set(cache_key, True, 15)
 
-            user_role = user.role.name.lower()
+            user_role = user.role.name
             log_info(
                 module_name="user_management",
                 message="Kullanıcı rolü kontrolü",
@@ -776,21 +874,21 @@ class UpdateMyProfileMutation(graphene.Mutation):
                     user.username = kwargs['username']
                 user.save()
 
-                if user_role == 'student':
+                if user_role == 'Student':
                     try:
                         student = Student.objects.get(user=user)
                         message = cls._update_student_profile(student, kwargs)
                     except Student.DoesNotExist:
                         raise Exception(ERROR_MESSAGES['STUDENT_NOT_FOUND'])
 
-                elif user_role == 'company':
+                elif user_role == 'Company':
                     try:
                         company = Company.objects.get(user=user)
                         message = cls._update_company_profile(company, kwargs)
                     except Company.DoesNotExist:
                         raise Exception(ERROR_MESSAGES['COMPANY_NOT_FOUND'])
 
-                elif user_role == 'admin':
+                elif user_role == 'Admin':
                     raise Exception("Admin kullanıcıları için profil güncelleme işlemi yapılamaz.")
 
                 else:
@@ -873,6 +971,18 @@ class UserManageQuery(graphene.ObjectType):
                 context={"user_id": user.id}
             )
             raise Exception("Öğrenci bulunamadı.")
+
+    @custom_permission_required('userManage.UserList')
+    def resolve_users(self, info, **kwargs):
+        return CustomUser.objects.all()
+    
+    @custom_permission_required('userManage.StudentList')
+    def resolve_students(self, info, **kwargs):
+        return Student.objects.all()
+    
+    @custom_permission_required('userManage.CompanyList')
+    def resolve_companies(self, info, **kwargs):
+        return Company.objects.all()
                 
 #-------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 class UserManageMutation(graphene.ObjectType):

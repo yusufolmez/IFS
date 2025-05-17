@@ -61,7 +61,6 @@ class LogMonitor:
             self.check_log_ages()
             
             if total_size > self.alert_threshold_mb:
-                # Burada email gönderme veya başka bildirim mekanizmaları eklenebilir
                 log_error('system_monitoring',
                          'Kritik log boyutu uyarısı',
                          {'total_size_mb': total_size})
