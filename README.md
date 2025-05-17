@@ -1,185 +1,113 @@
-# IFS (Internship Follow-up System)
+# IFS (Internship Follow-up System) 🎓
 
-## 1. Proje Genel Bakış
+Staj takip süreçlerini kolaylaştırmak ve dijitalleştirmek için tasarlanmış modern bir web uygulaması.
 
-### 1.1 Amaç
+## �� Özellikler
 
-IFS, staj takip ve yönetim sistemidir. Öğrencilerin staj başvurularını, staj günlüklerini ve değerlendirmelerini yönetmek için tasarlanmıştır.
+- Staj başvuru süreçlerinin yönetimi
+- Staj günlüğü oluşturma ve takibi
+- Staj değerlendirme sistemi
+- Rol bazlı yetkilendirme (Öğrenci, Şirket, Admin)
+- GraphQL API ile veri yönetimi
+- E-posta bildirim sistemi
+- Otomatik görev planlama (Cron jobs)
 
-### 1.2 Teknoloji Stack'i
+## 🛠️ Teknolojiler
 
-- **Backend Framework:** Django 4.2.20
+- **Backend:** Django 4.2.20
 - **API:** GraphQL (Graphene)
-- **Veritabanı:** SQLite (Geliştirme), PostgreSQL (Production)
-- **Cache:** Redis
-- **Authentication:** JWT (JSON Web Tokens)
-- **Containerization:** Docker
-- **Storage:** Azure Blob Storage
+- **Veritabanı:** PostgreSQL 15
+- **Önbellek:** Redis
+- **Containerization:** Docker & Docker Compose
+- **Kimlik Doğrulama:** JWT (JSON Web Tokens)
 
-## 2. Kurulum
+## 📋 Gereksinimler
 
-### 2.1 Gereksinimler
-
-- Python 3.8+
 - Docker ve Docker Compose
-- Redis
-- Azure Storage Account (Dosya yüklemeleri için)
+- Python 3.8 veya üzeri (lokal geliştirme için)
+- Git
 
-### 2.2 Kurulum Adımları
+## 🚀 Kurulum
 
 1. Projeyi klonlayın:
-
 ```bash
-git clone [repo-url]
-cd IFS
+git clone <proje-url>
+cd core
 ```
 
-2. Sanal ortam oluşturun ve aktifleştirin:
-
-```bash
-python -m venv venv
-source venv/bin/activate  # Linux/Mac
-venv\Scripts\activate     # Windows
-```
-
-3. Bağımlılıkları yükleyin:
-
-```bash
-pip install -r core/requirements.txt
-```
-
-4. Environment değişkenlerini ayarlayın:
-
+2. Ortam değişkenleri dosyasını oluşturun:
 ```bash
 cp .env.example .env
-# .env dosyasını düzenleyin
 ```
 
-5. Docker ile çalıştırın:
+3. .env dosyasını düzenleyin ve gerekli değişkenleri ayarlayın:
+```env
+DB_NAME=your_db_name
+DB_USER=your_db_user
+DB_PASSWORD=your_db_password
+REDIS_PASSWORD=your_redis_password
+```
 
+4. Docker containerlarını başlatın:
 ```bash
 docker-compose up -d
 ```
 
-## 3. Proje Yapısı
-
-```
-IFS/
-├── core/                    # Ana Django projesi
-│   ├── userManage/         # Kullanıcı yönetimi modülü
-│   ├── internshipManage/   # Staj yönetimi modülü
-│   ├── templates/          # HTML şablonları
-│   └── manage.py           # Django yönetim scripti
-├── requirements.txt        # Python bağımlılıkları
-├── docker-compose.yml     # Docker yapılandırması
-└── Dockerfile             # Docker image yapılandırması
-```
-
-## 4. API Dokümantasyonu
-
-### 4.1 Authentication Endpoints
-
-#### Login
-
-```graphql
-mutation {
-  auth(usernameoremail: String!, password: String!) {
-    tokens {
-      access_token
-      refresh_token
-    }
-  }
-}
-```
-
-#### Refresh Token
-
-```graphql
-mutation {
-  refreshToken(refresh_token: String!) {
-    tokens {
-      access_token
-      refresh_token
-    }
-  }
-}
-```
-
-### 4.2 User Management Endpoints
-
-#### Create User
-
-```graphql
-mutation {
-  userCreate(
-    username: String!
-    email: String!
-    password: String!
-    role_id: ID!
-    user_type: String!
-  ) {
-    user {
-      id
-      username
-      email
-    }
-    success
-    message
-  }
-}
-```
-
-## 5. Geliştirme
-
-### 5.1 Kod Standartları
-
-- PEP 8 uyumlu Python kodu
-- Docstring kullanımı
-- Modüler yapı
-
-### 5.2 Git Workflow
-
-- Feature branch workflow
-- Pull request reviews
-- Semantic versioning
-
-## 6. Deployment
-
-### 6.1 Production Ortamı
-
-1. Environment değişkenlerini ayarlayın
-2. PostgreSQL veritabanını yapılandırın
-3. Redis cache'i yapılandırın
-4. Azure Storage bağlantısını ayarlayın
-
-### 6.2 Docker Deployment
-
+5. Veritabanı migrationlarını uygulayın:
 ```bash
-docker-compose -f docker-compose.prod.yml up -d
+docker-compose exec web python manage.py migrate
 ```
 
-## 7. Güvenlik
+6. Süper kullanıcı oluşturun:
+```bash
+docker-compose exec web python manage.py createsuperuser
+```
 
-### 7.1 Authentication
+## 🌐 Erişim
 
-- JWT tabanlı kimlik doğrulama
-- Access ve Refresh token mekanizması
-- Token blacklist sistemi
+- **Django Admin Panel:** http://localhost:8000/admin
+- **GraphQL Playground:** http://localhost:8000/graphql
 
-### 7.2 Authorization
+## 📊 Sistem Mimarisi
 
-- Rol tabanlı yetkilendirme
-- Özel izin sistemi
-- Rate limiting (Redis ile)
+Uygulama aşağıdaki ana bileşenlerden oluşur:
 
-## 8. Monitoring ve Logging
+- **userManage:** Kullanıcı yönetimi ve yetkilendirme sistemi
+  - Öğrenci, şirket ve admin rolleri
+  - JWT tabanlı kimlik doğrulama
 
-### 8.1 Log Dosyaları
+- **internshipManage:** Staj süreçleri yönetimi
+  - Staj başvuru işlemleri
+  - Staj günlüğü yönetimi
+  - Staj değerlendirme sistemi
+  - E-posta bildirimleri
 
-- `user_management.log`: Kullanıcı işlemleri
-- `debug.log`: Sistem hataları
+- **Cron Jobs:** Zamanlanmış görevler
+  - Otomatik e-posta bildirimleri
+  - Durum güncellemeleri
 
-### 8.2 Cache Monitoring
+## 🔧 Geliştirme
 
-- Redis cache durumu
-- Rate limiting metrikleri
+Lokal geliştirme ortamı için:
+
+1. Virtual environment oluşturun:
+```bash
+python -m venv venv
+source venv/bin/activate  # Linux/Mac
+.\venv\Scripts\activate   # Windows
+```
+
+2. Bağımlılıkları yükleyin:
+```bash
+pip install -r requirements.txt
+```
+
+3. Geliştirme sunucusunu başlatın:
+```bash
+python manage.py runserver
+```
+
+## 📝 Loglar
+
+Uygulama logları `logs/` dizininde tutulur ve Docker volume olarak saklanır.
+
